@@ -5,238 +5,720 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Gestor de Demonios — systemd</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Inter:wght@300;400;600&display=swap');
-  :root {
-    --bg: #0d0d0d; --surface: #161616; --border: #2a2a2a;
-    --accent: #00ff88; --accent2: #ff4466; --accent3: #4488ff;
-    --text: #e8e8e8; --muted: #666;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; min-height: 100vh; padding: 2rem; }
-  header { display: flex; align-items: center; gap: 1rem; margin-bottom: 2.5rem; border-bottom: 1px solid var(--border); padding-bottom: 1.5rem; }
-  header h1 { font-family: 'Space Mono', monospace; font-size: 1.4rem; color: var(--accent); }
-  header span { font-size: 0.75rem; color: var(--muted); font-family: 'Space Mono', monospace; }
-  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: pulse 2s infinite; }
-  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem; }
-  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
-  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.5rem; }
-  .card h2 { font-family: 'Space Mono', monospace; font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1.2rem; }
-  .card h2 span { color: var(--accent); margin-right: 0.5rem; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-  th { text-align: left; padding: 0.5rem 0.75rem; color: var(--muted); font-weight: 400; font-size: 0.75rem; border-bottom: 1px solid var(--border); }
-  td { padding: 0.6rem 0.75rem; border-bottom: 1px solid #1a1a1a; font-family: 'Space Mono', monospace; font-size: 0.8rem; }
-  tr:hover td { background: #1c1c1c; }
-  .btn { padding: 0.3rem 0.75rem; border: none; border-radius: 4px; font-family: 'Space Mono', monospace; font-size: 0.7rem; cursor: pointer; transition: opacity 0.15s; text-decoration: none; display: inline-block; line-height: 1.6; }
-  .btn:hover { opacity: 0.8; }
-  .btn-green { background: var(--accent); color: #000; }
-  .btn-red   { background: var(--accent2); color: #fff; }
-  .btn-blue  { background: var(--accent3); color: #fff; }
-  .btn-gray  { background: #2a2a2a; color: var(--text); }
-  .form-group { margin-bottom: 1rem; }
-  label { display: block; font-size: 0.75rem; color: var(--muted); margin-bottom: 0.3rem; font-family: 'Space Mono', monospace; }
-  input { width: 100%; background: #111; border: 1px solid var(--border); border-radius: 4px; padding: 0.5rem 0.75rem; color: var(--text); font-family: 'Space Mono', monospace; font-size: 0.8rem; outline: none; transition: border-color 0.15s; }
-  input:focus { border-color: var(--accent); }
-  .output { background: #0a0a0a; border: 1px solid var(--border); border-radius: 4px; padding: 1rem; font-family: 'Space Mono', monospace; font-size: 0.75rem; color: var(--accent); white-space: pre-wrap; max-height: 300px; overflow-y: auto; min-height: 60px; }
-  .service-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }
-  .full { grid-column: 1 / -1; }
-  .ip-input { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
-  .ip-input input { flex: 1; }
-  .vm-ip   { color: var(--accent); }
-  .vm-port { color: var(--accent3); }
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Inter:wght@300;400;500;600&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20,300,0,0');
   
-  /* Indicadores de salud HAProxy */
-  .status-led {
-    display: inline-block;
-    width: 10px; height: 10px;
-    border-radius: 50%;
-    margin-right: 6px;
-    box-shadow: 0 0 5px rgba(0,0,0,0.5);
+  :root {
+    --bg-dark: #0a0a0c;
+    --sidebar-bg: rgba(20, 20, 24, 0.6);
+    --surface: rgba(255, 255, 255, 0.04);
+    --surface-hover: rgba(255, 255, 255, 0.08);
+    --border: rgba(255, 255, 255, 0.1);
+    --accent: #10b981;
+    --accent-hover: #059669;
+    --accent2: #ef4444;
+    --accent2-hover: #b91c1c;
+    --accent3: #3b82f6;
+    --accent3-hover: #2563eb;
+    --accent4: #eab308;
+    --text-main: #f8fafc;
+    --text-muted: #94a3b8;
+    --sidebar-width: 280px;
+    --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
-  .status-up    { background: var(--accent);  box-shadow: 0 0 8px var(--accent); }
-  .status-down  { background: var(--accent2); box-shadow: 0 0 8px var(--accent2); }
-  .status-maint { background: #ffaa00; }
-  .status-unk   { background: #555; }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  
+  body { 
+    background: var(--bg-dark); 
+    background-image: radial-gradient(circle at top right, rgba(16, 185, 129, 0.05), transparent 400px),
+                      radial-gradient(circle at bottom left, rgba(59, 130, 246, 0.05), transparent 400px);
+    color: var(--text-main); 
+    font-family: 'Inter', sans-serif; 
+    min-height: 100vh; 
+    display: flex;
+    overflow-x: hidden;
+  }
+
+  /* Typography */
+  h1, h2, h3, .mono { font-family: 'Space Mono', monospace; }
+  
+  /* Layout: Sidebar */
+  #sidebar {
+    width: var(--sidebar-width);
+    background: var(--sidebar-bg);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    padding: 2rem 1.5rem;
+    position: fixed;
+    height: 100vh;
+    z-index: 100;
+  }
+
+  .logo-area {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 3rem;
+  }
+  
+  .logo-area h1 { font-size: 1.25rem; color: var(--accent); letter-spacing: -0.5px; }
+  .logo-area p { font-size: 0.65rem; color: var(--text-muted); font-family: 'Space Mono', monospace; margin-top: 4px; }
+  
+  .dot-pulse {
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 10px var(--accent);
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(0.9); } }
+
+  nav { display: flex; flex-direction: column; gap: 0.5rem; }
+  
+  .nav-item {
+    padding: 0.8rem 1rem;
+    border-radius: 8px;
+    color: var(--text-muted);
+    font-weight: 500;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: var(--transition);
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    border: 1px solid transparent;
+  }
+  
+  .nav-item:hover {
+    background: var(--surface-hover);
+    color: var(--text-main);
+  }
+  
+  .nav-item.active {
+    background: rgba(16, 185, 129, 0.1);
+    color: var(--accent);
+    border-color: rgba(16, 185, 129, 0.2);
+  }
+
+  /* Layout: Main Content */
+  main {
+    flex: 1;
+    margin-left: var(--sidebar-width);
+    padding: 2.5rem 3rem;
+    max-width: 1400px;
+  }
+
+  .view {
+    display: none;
+    animation: fadeIn 0.4s ease forwards;
+  }
+  
+  .view.active { display: block; }
+  
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+  .view-header {
+    margin-bottom: 2rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+  
+  .view-header h2 { font-size: 1.5rem; font-weight: 600; color: var(--text-main); margin-bottom: 0.4rem; }
+  .view-header p { color: var(--text-muted); font-size: 0.9rem; }
+
+  /* Grid and Cards (Glassmorphism) */
+  .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 1.5rem; margin-bottom: 1.5rem; }
+  .grid-1 { display: grid; grid-template-columns: 1fr; gap: 1.5rem; margin-bottom: 1.5rem; }
+
+  .card {
+    background: var(--surface);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.5rem;
+    transition: var(--transition);
+  }
+  
+  .card:hover { border-color: rgba(255, 255, 255, 0.2); box-shadow: 0 4px 20px rgba(0,0,0,0.2); }
+
+  .card h3 {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin-bottom: 1.2rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  
+  .card h3 span { color: var(--accent); }
+
+  /* Tables */
+  .table-container { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th { text-align: left; padding: 0.75rem 1rem; color: var(--text-muted); font-weight: 500; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); }
+  td { padding: 0.8rem 1rem; border-bottom: 1px solid rgba(255,255,255,0.05); font-family: 'Space Mono', monospace; font-size: 0.8rem; vertical-align: middle; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+  
+  /* Status indicators */
+  .status-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 12px; font-size: 0.7rem; font-weight: 600; font-family: 'Inter', sans-serif;}
+  .status-up { background: rgba(16, 185, 129, 0.15); color: var(--accent); }
+  .status-down { background: rgba(239, 68, 68, 0.15); color: var(--accent2); }
+  .status-warn { background: rgba(234, 179, 8, 0.15); color: var(--accent4); }
+  .status-unk { background: rgba(148, 163, 184, 0.15); color: var(--text-muted); }
+
+  .status-led { width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 5px currentColor; }
+  .led-up { background: var(--accent); }
+  .led-down { background: var(--accent2); }
+
+  /* Forms & Inputs */
+  .form-group { margin-bottom: 1.2rem; }
+  label { display: block; font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.4rem; font-family: 'Space Mono', monospace; }
+  input, select {
+    width: 100%;
+    background: rgba(0,0,0,0.3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.6rem 0.8rem;
+    color: var(--text-main);
+    font-family: 'Space Mono', monospace;
+    font-size: 0.85rem;
+    outline: none;
+    transition: var(--transition);
+  }
+  input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2); }
+  input[type="file"] { padding: 0.4rem; font-family: 'Inter', sans-serif; font-size: 0.8rem; }
+  option { background: var(--bg-dark); color: var(--text-main); }
+
+  /* Buttons */
+  .btn {
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: 6px;
+    font-family: 'Inter', sans-serif;
+    font-weight: 500;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: var(--transition);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    text-decoration: none;
+  }
+  .btn:active { transform: scale(0.97); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  
+  .btn-green { background: var(--accent); color: #000; }
+  .btn-green:hover:not(:disabled) { background: var(--accent-hover); }
+  
+  .btn-red { background: rgba(239, 68, 68, 0.15); color: var(--accent2); border: 1px solid rgba(239, 68, 68, 0.3); }
+  .btn-red:hover:not(:disabled) { background: var(--accent2); color: #fff; }
+  
+  .btn-blue { background: var(--accent3); color: #fff; }
+  .btn-blue:hover:not(:disabled) { background: var(--accent3-hover); }
+  
+  .btn-gray { background: rgba(255,255,255,0.05); color: var(--text-main); border: 1px solid var(--border); }
+  .btn-gray:hover:not(:disabled) { background: rgba(255,255,255,0.1); }
+  
+  .btn-sm { padding: 0.3rem 0.6rem; font-size: 0.75rem; border-radius: 4px; }
+  
+  .action-group { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+  /* Output console */
+  .output-console {
+    background: #000;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--accent);
+    white-space: pre-wrap;
+    max-height: 250px;
+    overflow-y: auto;
+    margin-top: 1rem;
+  }
+
+  /* Toasts System */
+  #toast-container {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    z-index: 1000;
+  }
+  
+  .toast {
+    background: rgba(20, 20, 24, 0.95);
+    backdrop-filter: blur(10px);
+    border-left: 4px solid var(--accent);
+    border-radius: 6px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    padding: 1rem 1.25rem;
+    color: var(--text-main);
+    min-width: 300px;
+    max-width: 400px;
+    animation: slideIn 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  
+  .toast.error { border-left-color: var(--accent2); }
+  .toast.info { border-left-color: var(--accent3); }
+  
+  .toast-title { font-weight: 600; font-size: 0.85rem; }
+  .toast-message { font-size: 0.8rem; color: var(--text-muted); line-height: 1.4; font-family: 'Space Mono', monospace;}
+  
+  .toast.fade-out { animation: slideOut 0.3s ease forwards; }
+  
+  @keyframes slideIn { from { opacity: 0; transform: translateX(100%); } to { opacity: 1; transform: translateX(0); } }
+  @keyframes slideOut { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(100%); } }
+
+  /* Modal System */
+  .modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.7);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+    opacity: 0;
+    transition: opacity 0.25s ease;
+    pointer-events: none;
+  }
+  
+  .modal-overlay.active { opacity: 1; pointer-events: auto; }
+  
+  .modal-content {
+    background: var(--bg-dark);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    width: 90%;
+    max-width: 450px;
+    padding: 2rem;
+    box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);
+    transform: translateY(20px) scale(0.95);
+    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  }
+  
+  .modal-overlay.active .modal-content { transform: translateY(0) scale(1); }
+  
+  .modal-header { margin-bottom: 1.5rem; }
+  .modal-title { font-size: 1.2rem; font-weight: 600; color: var(--text-main); margin-bottom: 0.5rem; }
+  .modal-desc { font-size: 0.85rem; color: var(--text-muted); line-height: 1.5; }
+  
+  .modal-actions { margin-top: 2rem; display: flex; gap: 1rem; justify-content: flex-end; }
+
+  /* Material Icons */
+  .icon {
+    font-family: 'Material Symbols Rounded';
+    font-weight: normal;
+    font-style: normal;
+    font-size: 18px;
+    line-height: 1;
+    letter-spacing: normal;
+    text-transform: none;
+    display: inline-block;
+    white-space: nowrap;
+    word-wrap: normal;
+    direction: ltr;
+    vertical-align: middle;
+    font-feature-settings: 'liga';
+    -webkit-font-smoothing: antialiased;
+  }
+  .nav-item .icon { font-size: 20px; }
+  
 </style>
 </head>
 <body>
 
-<header>
-  <div class="dot"></div>
-  <h1>gestor-daemon</h1>
-  <span>// systemd · VirtualBox · SSH · Guest Additions</span>
-</header>
-
-<div class="grid">
-
-  <div class="card full">
-    <h2><span>//</span>Preparar Máquina Virtual (Plantilla)</h2>
-    <form id="prepare-vm-form" onsubmit="prepararVM(event)">
-      <div class="grid" style="grid-template-columns:1fr 1fr;margin-bottom:0">
-        <div class="form-group">
-          <label>Archivo ejecutable</label>
-          <input type="file" id="exec-file" required>
-        </div>
-        <div class="form-group">
-          <label>Número de puerto</label>
-          <input type="number" id="vm-port" placeholder="ej. 8081" required>
-        </div>
-        <div class="form-group">
-          <label>Archivos adicionales (.zip)</label>
-          <input type="file" id="zip-file" accept=".zip">
-        </div>
-        <div class="form-group">
-          <label>Máquina virtual (plantilla)</label>
-          <input type="text" id="template-vm-name" placeholder="ej. plantillaServer" required>
-        </div>
-        <div class="form-group">
-          <label>Nombre disco multiconexión</label>
-          <input type="text" id="new-disk-name" placeholder="ej. disco-srvimg" required>
-        </div>
+  <!-- SIDEBAR -->
+  <aside id="sidebar">
+    <div class="logo-area">
+      <div class="dot-pulse"></div>
+      <div>
+        <h1>GestorDaemon</h1>
+        <p>192.168.x.x / systemd</p>
       </div>
-      <button type="submit" class="btn btn-green" id="btn-preparar" style="margin-top:1rem">
-        Ejecutar Automatización
-      </button>
-      <div id="prepare-output" class="output" style="margin-top:1rem;display:none"></div>
-    </form>
-  </div>
-
-  <div class="card">
-    <h2><span>//</span>Discos Multiconexión</h2>
-    <table>
-      <thead><tr><th>Nombre</th><th>Ruta</th><th>Acciones</th></tr></thead>
-      <tbody id="disks-table">
-        <tr><td colspan="3" style="color:var(--muted)">Cargando...</td></tr>
-      </tbody>
-    </table>
-  </div>
-
-  <div class="card">
-    <h2><span>//</span>Crear Máquina Virtual Hija</h2>
-    <div class="form-group">
-      <label>Nombre de la nueva VM</label>
-      <input type="text" id="new-vm-name" placeholder="ej. Srv-img1">
     </div>
-    <div class="form-group">
-      <label>UUID del disco multiconexión</label>
-      <input type="text" id="disk-uuid" placeholder="Se llena al hacer clic en Usar este disco">
-    </div>
-    <button class="btn btn-green" onclick="createVM()">+ Crear e iniciar VM</button>
-    <div id="create-output" class="output" style="margin-top:1rem;display:none"></div>
-  </div>
-
-  <div class="card full">
-    <h2><span>//</span>Máquinas Virtuales Hijas</h2>
-    <table>
-      <thead>
-        <tr><th>Nombre</th><th>Dirección IP</th><th>Puerto</th><th>Acciones</th></tr>
-      </thead>
-      <tbody id="vms-hijas-table">
-        <tr><td colspan="4" style="color:var(--muted)">Las VMs creadas aparecerán aquí</td></tr>
-      </tbody>
-    </table>
-  </div>
-
-  <div class="card full">
-    <h2><span>//</span>Máquinas Virtuales Registradas (VirtualBox)</h2>
-    <table>
-      <thead><tr><th>Nombre</th><th>UUID</th><th>Dirección IP</th><th>Acciones</th></tr></thead>
-      <tbody id="vms-table">
-        <tr><td colspan="4" style="color:var(--muted)">Cargando...</td></tr>
-      </tbody>
-    </table>
-  </div>
-
-  <div class="card full">
-    <h2><span>//</span>Gestión del Servicio (systemctl)</h2>
-    <div class="ip-input">
-      <input type="text" id="service-ip" placeholder="IP de la VM  ej. 192.168.1.50">
-      <input type="text" id="service-name" placeholder="Nombre del servicio" value="app-custom.service">
-    </div>
-    <div class="service-actions">
-      <button class="btn btn-green" onclick="serviceAction('start')">▶ Iniciar</button>
-      <button class="btn btn-red"   onclick="serviceAction('stop')">■ Detener</button>
-      <button class="btn btn-blue"  onclick="serviceAction('restart')">↺ Reiniciar</button>
-      <button class="btn btn-gray"  onclick="serviceAction('enable')">✓ Habilitar</button>
-      <button class="btn btn-gray"  onclick="serviceAction('disable')">✗ Deshabilitar</button>
-      <button class="btn btn-gray"  onclick="serviceAction('status')">? Estado</button>
-      <button class="btn btn-gray"  onclick="serviceAction('logs')">≡ Logs</button>
-    </div>
-    <div class="output" id="service-output">// La salida aparecerá aquí...</div>
-  </div>
-
-  <div class="card">
-    <h2><span>//</span>Crear Balanceador desde Cero</h2>
-    <div class="form-group">
-      <label>Nombre del Nuevo Balanceador (VM)</label>
-      <input type="text" id="new-lb-vm-name" placeholder="ej. LB-Produccion">
-    </div>
-    <div class="form-group">
-      <label>UUID del Disco Maestro HAProxy</label>
-      <input type="text" id="lb-disk-uuid" placeholder="Se llena al hacer clic en Usar este disco">
-    </div>
-    <button class="btn btn-green" style="width:100%;font-weight:bold" onclick="createLBVM()">+ Clonar, Encender y Registrar LB</button>
-    <div id="create-lb-output" class="output" style="margin-top:1rem;display:none"></div>
-  </div>
-
-  <div class="card">
-    <h2><span>//</span>Gestor de Balanceadores (HAProxy)</h2>
-    <div class="form-group">
-      <label>Nombre del Balanceador</label>
-      <input type="text" id="lb-name" placeholder="ej. LB-Principal">
-    </div>
-    <div class="form-group">
-      <label>IP del Balanceador</label>
-      <input type="text" id="lb-ip" placeholder="ej. 192.168.1.100">
-    </div>
-    <button class="btn btn-blue" onclick="addLB()">+ Registrar Balanceador</button>
     
-    <table style="margin-top:1rem;">
-      <thead><tr><th>NOMBRE</th><th>IP</th><th>ACCIONES</th></tr></thead>
-      <tbody id="lb-table">
-        <tr><td colspan="3" style="color:var(--muted)">Sin balanceadores</td></tr>
-      </tbody>
-    </table>
-  </div>
-
-  <div class="card">
-    <h2><span>//</span>Reglas de Nodos (Backends)</h2>
-    <div class="form-group">
-      <label>1. Seleccionar Balanceador Destino</label>
-      <select id="select-lb" onchange="renderAssignedNodes()" style="width:100%;padding:0.4rem;background:var(--bg);color:var(--text);border:1px solid var(--border)">
-        <option value="">(Primero registra un LB)</option>
-      </select>
-    </div>
-    <div class="form-group" style="display:flex;gap:0.5rem;align-items:flex-end;">
-      <div style="flex:1">
-        <label>2. Seleccionar Servidor Activo</label>
-        <select id="select-node" style="width:100%;padding:0.4rem;background:var(--bg);color:var(--text);border:1px solid var(--border)">
-           <option value="">(Buscando VMs activas...)</option>
-        </select>
+    <nav>
+      <div class="nav-item active" onclick="switchView('dashboard')">
+        <span class="icon">monitor_heart</span> Monitor de Estado
       </div>
-      <button class="btn btn-green" onclick="assignNode()">+ Adjuntar</button>
+      <div class="nav-item" onclick="switchView('catalog')">
+        <span class="icon">inventory_2</span> Plantillas y Discos
+      </div>
+      <div class="nav-item" onclick="switchView('deploy')">
+        <span class="icon">rocket_launch</span> Aprovisionamiento
+      </div>
+      <div class="nav-item" onclick="switchView('ops')">
+        <span class="icon">hub</span> Operaciones de Red
+      </div>
+    </nav>
+  </aside>
+
+  <!-- MAIN CONTENT -->
+  <main>
+    
+    <!-- CONTENEDOR TOASTS -->
+    <div id="toast-container"></div>
+    
+    <!-- MODAL GLOBAL -->
+    <div class="modal-overlay" id="global-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-title" id="modal-title">Título</div>
+                <div class="modal-desc" id="modal-desc">Descripción</div>
+            </div>
+            <div id="modal-body-custom"></div>
+            <div class="modal-actions" id="modal-buttons"></div>
+        </div>
     </div>
 
-    <table style="margin-top:1rem;">
-      <thead><tr><th>ESTADO</th><th>SERVIDOR (NODO)</th><th>IP:PUERTO</th><th>ACCIONES</th></tr></thead>
-      <tbody id="nodes-table">
-        <tr><td colspan="4" style="color:var(--muted)">Sin nodos asignados</td></tr>
-      </tbody>
-    </table>
+    <!-- ==========================================
+         VISTA 1: DASHBOARD
+         ========================================== -->
+    <section id="view-dashboard" class="view active">
+      <div class="view-header">
+        <h2>Monitor de Estado Global</h2>
+        <p>Resumen en tiempo real de nodos, balanceadores y máquinas crudas</p>
+      </div>
 
-    <button class="btn btn-accent" style="width:100%; margin-top:1rem; font-size:1rem; font-weight:bold; padding:0.8rem;" onclick="deployHAProxy()">🚀 Desplegar Configuración a HAProxy</button>
-    <div id="haproxy-output" class="output" style="margin-top:1rem;display:none"></div>
-  </div>
+      <div class="grid-1">
+        <!-- Hijas -->
+        <div class="card">
+          <h3><span>//</span> Nodos Web (Máquinas Hijas)</h3>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr><th>ESTADO</th><th>NOMBRE</th><th>IP:PUERTO</th><th>ACCIONES RÁPIDAS</th></tr>
+              </thead>
+              <tbody id="vms-hijas-table">
+                <tr><td colspan="4" style="color:var(--text-muted);text-align:center;padding:2rem;">Cargando nodos...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
 
-</div>
+      <div class="grid-2">
+        <!-- HAProxy LBs -->
+        <div class="card">
+          <h3><span>//</span> Balanceadores (HAProxy)</h3>
+          <!-- Formulario de registro manual de LB -->
+          <div style="display:flex; gap:0.6rem; margin-bottom:1rem; align-items:flex-end;">
+            <div style="flex:1">
+              <label>Nombre</label>
+              <input type="text" id="lb-name" placeholder="ej. LB-Principal">
+            </div>
+            <div style="flex:1">
+              <label>Dirección IP</label>
+              <input type="text" id="lb-ip" placeholder="ej. 192.168.1.100">
+            </div>
+            <button class="btn btn-blue" onclick="addLB()" style="white-space:nowrap"><span class="icon">add</span> Registrar LB</button>
+          </div>
+          <div class="table-container">
+            <table>
+              <thead><tr><th>NOMBRE</th><th>IP</th><th>ACCIONES</th></tr></thead>
+              <tbody id="lb-table">
+                <tr><td colspan="3" style="color:var(--text-muted);text-align:center;padding:1rem;">Sin balanceadores registrados</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Crudas -->
+        <div class="card">
+          <h3><span>//</span> Máquinas Base (Raw VBox)</h3>
+          <div class="table-container">
+            <table>
+              <thead><tr><th>ESTADO / NOMBRE</th><th>IP</th><th>ACCIONES</th></tr></thead>
+              <tbody id="vms-table">
+                <tr><td colspan="3" style="color:var(--text-muted);text-align:center;padding:1rem;">Cargando VMs...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==========================================
+         VISTA 2: CATÁLOGO Y DISCOS
+         ========================================== -->
+    <section id="view-catalog" class="view">
+      <div class="view-header">
+        <h2>Catálogo de Discos y Plantillas</h2>
+        <p>Gestiona discos subyacentes e inyecta software base</p>
+      </div>
+
+      <div class="grid-1">
+        <div class="card">
+          <h3><span>//</span> Inventario de Discos Multiconexión</h3>
+          <div class="table-container">
+            <table>
+              <thead><tr><th>NOMBRE E IDENTIFICADOR</th><th>RUTA LOCAL</th><th>ACCIONES</th></tr></thead>
+              <tbody id="disks-table">
+                <tr><td colspan="3" style="color:var(--text-muted);text-align:center;padding:2rem;">Analizando almacenamiento...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-1">
+        <div class="card">
+          <h3><span>//</span> Generador de Plantilla</h3>
+          <form id="prepare-vm-form" onsubmit="prepararVM(event)">
+            <div class="grid-2" style="margin-bottom:0">
+              <div class="form-group">
+                <label>Instalador / Binario Ejecutable</label>
+                <input type="file" id="exec-file" required>
+              </div>
+              <div class="form-group">
+                <label>Puerto Interno App</label>
+                <input type="number" id="vm-port" placeholder="ej. 8080" required>
+              </div>
+              <div class="form-group">
+                <label>Archivos Adicionales/Assets (.zip OPCIONAL)</label>
+                <input type="file" id="zip-file" accept=".zip">
+              </div>
+              <div class="form-group">
+                <label>Nombre origen VM (VirtualBox)</label>
+                <input type="text" id="template-vm-name" placeholder="ej. ServidorBaseDebian" required>
+              </div>
+              <div class="form-group">
+                <label>Etiqueta destino disco multiconexión</label>
+                <input type="text" id="new-disk-name" placeholder="ej. base-web-app" required>
+              </div>
+            </div>
+            <div style="text-align:right">
+              <button type="submit" class="btn btn-green" id="btn-preparar">
+                <span class="icon">play_circle</span> Iniciar Pipeline de Automatización
+              </button>
+            </div>
+            <div id="prepare-output" class="output-console" style="display:none"></div>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==========================================
+         VISTA 3: APROVISIONAMIENTO
+         ========================================== -->
+    <section id="view-deploy" class="view">
+      <div class="view-header">
+        <h2>Aprovisionamiento Rápido</h2>
+        <p>Despliega instancias a partir de los discos inmutables de manera instantánea</p>
+      </div>
+
+      <div class="grid-2">
+        <div class="card" style="border: 1px solid rgba(16, 185, 129, 0.3)">
+          <h3><span>//</span> Desplegar Nodo de Aplicación (Hija)</h3>
+          <div class="form-group">
+            <label>Nombre de Instancia (Identificador VM)</label>
+            <input type="text" id="new-vm-name" placeholder="ej. Prod-Nodo-01">
+          </div>
+          <div class="form-group">
+            <label>UUID Origen (Disco App Multiconexión)</label>
+            <select id="disk-uuid">
+               <option value="">(Buscando discos multiconexión en el Catálogo...)</option>
+            </select>
+          </div>
+          <button class="btn btn-green" style="width:100%" onclick="createVM()"><span class="icon">deployed_code</span> Levantar Nodo Web</button>
+          <div id="create-output" class="output-console" style="display:none"></div>
+        </div>
+
+        <div class="card" style="border: 1px solid rgba(59, 130, 246, 0.3)">
+          <h3><span>//</span> Desplegar Balanceador HAProxy</h3>
+          <div class="form-group">
+            <label>Nombre de Instancia (Identificador LB)</label>
+            <input type="text" id="new-lb-vm-name" placeholder="ej. LB-Frontera-A">
+          </div>
+          <div class="form-group">
+            <label>UUID Origen (Disco HAProxy Multiconexión)</label>
+            <select id="lb-disk-uuid">
+               <option value="">(Buscando discos multiconexión en el Catálogo...)</option>
+            </select>
+          </div>
+          <button class="btn btn-blue" style="width:100%" onclick="createLBVM()"><span class="icon">balance</span> Levantar Balanceador</button>
+          <div id="create-lb-output" class="output-console" style="display:none"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==========================================
+         VISTA 4: OPERACIONES
+         ========================================== -->
+    <section id="view-ops" class="view">
+      <div class="view-header">
+        <h2>Orquestación y Operaciones</h2>
+        <p>Aplica reglas proxy y manipula servicios nativos Linux</p>
+      </div>
+
+      <div class="grid-2">
+        <!-- HAProxy Rules -->
+        <div class="card">
+          <h3><span>//</span> Inyección de Tráfico HAProxy</h3>
+          
+          <div class="form-group">
+            <label>1. Capa L7 - Balanceador Objetivo</label>
+            <div style="display:flex; gap:0.5rem">
+              <select id="select-lb" style="flex:1" onchange="onLBMainSelectChange()">
+                <option value="">Cargando balanceadores...</option>
+              </select>
+              <a id="btn-visit-lb" class="btn btn-blue" style="display:none" target="_blank" title="Abrir interface del balanceador">
+                <span class="icon">open_in_new</span> Ir a Web
+              </a>
+            </div>
+          </div>
+          
+          <div class="action-group form-group" style="align-items:flex-end">
+            <div style="flex:1">
+              <label>2. Pool de Backends - Seleccionar Nodo Activo</label>
+              <select id="select-node">
+                 <option value="">Buscando VMs hijas activas...</option>
+              </select>
+            </div>
+            <button class="btn btn-green" onclick="assignNode()"><span class="icon">link</span> Añadir a Pool</button>
+          </div>
+
+          <div class="table-container" style="margin-top:1.5rem">
+            <table>
+              <thead><tr><th>HEALTH</th><th>NODO:PUERTO</th><th>ACCIÓN</th></tr></thead>
+              <tbody id="nodes-table">
+                <tr><td colspan="3" style="color:var(--text-muted);text-align:center">Red no definida</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <button class="btn btn-blue" style="width:100%; margin-top:1.5rem; padding:0.8rem" onclick="deployHAProxy()">
+            <span class="icon">sync</span> Forzar Hot-Reload de Configuración en LB
+          </button>
+          <div id="haproxy-output" class="output-console" style="display:none"></div>
+        </div>
+
+        <!-- systemctl -->
+        <div class="card">
+          <h3><span>//</span> Terminal: systemctl remote</h3>
+          
+          <div class="grid-2" style="margin-bottom:0.5rem">
+            <div class="form-group">
+              <label>Dirección IPv4</label>
+              <input type="text" id="service-ip" placeholder="Target IP">
+            </div>
+            <div class="form-group">
+              <label>Unidad de Servicio</label>
+              <input type="text" id="service-name" value="app-custom.service" placeholder="ej. nginx.service">
+            </div>
+          </div>
+          
+          <div class="action-group" style="margin-bottom:1.5rem">
+            <button class="btn btn-green btn-sm" onclick="serviceAction('start')">Start</button>
+            <button class="btn btn-red btn-sm" onclick="serviceAction('stop')">Stop</button>
+            <button class="btn btn-blue btn-sm" onclick="serviceAction('restart')">Restart</button>
+            <button class="btn btn-gray btn-sm" onclick="serviceAction('enable')">Enable</button>
+            <button class="btn btn-gray btn-sm" onclick="serviceAction('disable')">Disable</button>
+            <button class="btn btn-gray btn-sm" onclick="serviceAction('status')">Status</button>
+            <button class="btn btn-gray btn-sm" onclick="serviceAction('logs')">Logs (journalctl)</button>
+          </div>
+          
+          <div class="output-console" id="service-output" style="min-height: 120px; display:block">// Listo para ejecutar comandos SSH...</div>
+        </div>
+      </div>
+    </section>
+
+  </main>
 
 <script>
+  // ================= VIEW ROUTING =================
+  function switchView(viewId) {
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    document.getElementById('view-' + viewId).classList.add('active');
+    
+    document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active'));
+    event.currentTarget.classList.add('active');
+    window.scrollTo({top:0, behavior:'smooth'});
+  }
+
+  // ================= TOAST SYSTEM =================
+  let toastCount = 0;
+  function showToast(title, message, type = 'success') {
+    const container = document.getElementById('toast-container');
+    const toastId = 'toast-' + toastCount++;
+    
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.id = toastId;
+    
+    toast.innerHTML = `
+      <div class="toast-title">${title}</div>
+      <div class="toast-message">${message}</div>
+    `;
+    
+    container.appendChild(toast);
+    
+    // Auto remove
+    setTimeout(() => {
+        const el = document.getElementById(toastId);
+        if(el) {
+            el.classList.add('fade-out');
+            setTimeout(() => el.remove(), 300);
+        }
+    }, 5000);
+  }
+
+  // ================= MODAL SYSTEM =================
+  const globalModal = document.getElementById('global-modal');
+  const modalTitle = document.getElementById('modal-title');
+  const modalDesc = document.getElementById('modal-desc');
+  const modalBodyCustom = document.getElementById('modal-body-custom');
+  const modalButtons = document.getElementById('modal-buttons');
+
+  function openModal({title, desc, bodyHTML='', buttons=[]}) {
+      modalTitle.textContent = title;
+      modalDesc.textContent = desc;
+      modalBodyCustom.innerHTML = bodyHTML;
+      
+      modalButtons.innerHTML = '';
+      buttons.forEach(b => {
+          const btn = document.createElement('button');
+          btn.className = `btn ${b.class || 'btn-gray'}`;
+          btn.textContent = b.text;
+          btn.onclick = () => {
+              if (b.onClick) b.onClick();
+              closeModal();
+          };
+          modalButtons.appendChild(btn);
+      });
+      globalModal.classList.add('active');
+  }
+
+  function closeModal() {
+      globalModal.classList.remove('active');
+  }
+
+  // ================= CORE STATE =================
   let ipCheckInterval = null;
   let lbs = [];
   let asignaciones = {};
   let lbStatusInterval = null;
   window.activeHijas = [];
 
+  // ================= STATE PERSISTENCE =================
   async function fetchState() {
       try {
           const res = await fetch('/api/haproxy/state');
@@ -248,7 +730,7 @@
           renderLBSelects();
           renderAssignedNodes();
       } catch(e) {
-          console.error("Error cargando el estado inicial", e);
+          console.error("Error", e);
       }
   }
 
@@ -259,176 +741,168 @@
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ lbs, asignaciones })
           });
-      } catch(e) {
-          console.error("Error guardando el estado", e);
-      }
+      } catch(e) { console.error("Error", e); }
   }
 
-  function addLB() {
-    const name = document.getElementById('lb-name').value.trim();
-    const ip = document.getElementById('lb-ip').value.trim();
-    if (!name || !ip) return alert("Completa Nombre e IP");
-    lbs.push({ name, ip });
-    if (!asignaciones[ip]) asignaciones[ip] = [];
-    document.getElementById('lb-name').value = '';
-    document.getElementById('lb-ip').value = '';
-    renderLBs();
-    renderLBSelects();
-    saveState();
+  // ================= COMPONENT RENDERING =================
+  
+  function getStatusBadge(stateStr) {
+      if(stateStr === 'corriendo') return `<span class="status-badge status-up"><span class="status-led led-up"></span> ONLINE</span>`;
+      if(stateStr === 'detenida' || stateStr.includes('error')) return `<span class="status-badge status-down"><span class="status-led led-down"></span> OFFLINE</span>`;
+      return `<span class="status-badge status-unk">${stateStr.toUpperCase()}</span>`;
   }
 
-  function deleteLB(ip) {
-    lbs = lbs.filter(lb => lb.ip !== ip);
-    delete asignaciones[ip];
-    renderLBs();
-    renderLBSelects();
-    renderAssignedNodes();
-    saveState();
-  }
-
-  function editLB(ip) {
-      const lb = lbs.find(l => l.ip === ip);
-      if(!lb) return;
-      const newName = prompt("Escribe el nuevo nombre para este balanceador (" + ip + "):", lb.name);
-      if(newName !== null && newName.trim() !== '') {
-          lb.name = newName.trim();
-          renderLBs();
-          renderLBSelects();
-          saveState();
-      }
-  }
-
-  function renderLBs() {
-    const tbody = document.getElementById('lb-table');
-    if (lbs.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="3" style="color:var(--muted)">Sin balanceadores</td></tr>';
-      return;
-    }
-    tbody.innerHTML = lbs.map(lb => '<tr><td>' + lb.name + '</td><td>' + lb.ip + '</td><td><button class="btn btn-gray" style="background:#b8860b;margin-right:0.4rem;" onclick="editLB(\'' + lb.ip + '\')">✏️ Editar</button><button class="btn btn-red" onclick="deleteLB(\'' + lb.ip + '\')">Borrar</button></td></tr>').join('');
-  }
-
-  function renderLBSelects() {
-    const sel = document.getElementById('select-lb');
-    if (lbs.length === 0) {
-      sel.innerHTML = '<option value="">(Primero registra un LB)</option>';
-      return;
-    }
-    sel.innerHTML = '<option value="">-- Seleccionar --</option>' + lbs.map(lb => '<option value="' + lb.ip + '">' + lb.name + ' (' + lb.ip + ')</option>').join('');
-    
-    // Al cambiar el LB, reiniciamos el sondeo
-    sel.onchange = () => {
-        stopLBPolling();
-        renderAssignedNodes();
-        if (sel.value) startLBPolling(sel.value);
-    };
-  }
-
-  function startLBPolling(ip) {
-    stopLBPolling();
-    pollLBStatus(ip);
-    lbStatusInterval = setInterval(() => pollLBStatus(ip), 5000);
-  }
-
-  function stopLBPolling() {
-    if (lbStatusInterval) {
-        clearInterval(lbStatusInterval);
-        lbStatusInterval = null;
-    }
-  }
-
-  async function pollLBStatus(ip) {
+  async function loadVMs() {
     try {
-        const res = await fetch('/api/haproxy/status?ip=' + ip);
-        if (!res.ok) return;
-        const stats = await res.json();
-        // Guardar estados en los nodos asignados localmente
-        if (asignaciones[ip]) {
-            asignaciones[ip].forEach(node => {
-                const s = stats.find(st => st.svname === node.name);
-                node.lastStatus = s ? s.status : 'UNK';
-            });
-            renderAssignedNodes();
+        const res = await fetch('/api/vms');
+        const vms = await res.json();
+        
+        const needsPolling = vms.some(v => v.state === 'corriendo' && (!v.ip || v.ip === ''));
+        if (needsPolling && !ipCheckInterval) ipCheckInterval = setInterval(loadVMs, 5000);
+        else if (!needsPolling && ipCheckInterval) { clearInterval(ipCheckInterval); ipCheckInterval = null; }
+
+        const hijas = vms.filter(v => v.port && v.port !== '');
+        const otras = vms.filter(v => !v.port || v.port === '');
+        window.activeHijas = hijas;
+        window.allVMs = vms;
+
+        // Populate Selects
+        const selNode = document.getElementById('select-node');
+        if (hijas.length > 0) {
+           selNode.innerHTML = hijas.map(h => `<option value="${h.name}">${h.name} (${h.ip || 'Sin IP'}:${h.port})</option>`).join('');
+        } else {
+           selNode.innerHTML = '<option value="">(Sin VMs hijas web disponibles)</option>';
         }
-    } catch(e) { console.error("Error sondeo HAProxy:", e); }
+
+        // Render Hijas Table
+        const tbodyHijas = document.getElementById('vms-hijas-table');
+        if (!hijas || hijas.length === 0) {
+          tbodyHijas.innerHTML = '<tr><td colspan="4" style="color:var(--text-muted);text-align:center">Despliega un nodo para visualizarlo aquí</td></tr>';
+        } else {
+          tbodyHijas.innerHTML = hijas.map(v => {
+            const url = `http://${v.ip || 'localhost'}:${v.port}`;
+            const irBtn = (v.ip && v.state === 'corriendo') ? `<a class="btn btn-blue btn-sm" href="${url}" target="_blank"><span class="icon">open_in_new</span> Web</a>` : '';
+            const ipDisplay = v.ip ? `${v.ip}<br><span style="color:var(--text-muted);font-size:0.7rem">Port: ${v.port}</span>` : '<span style="opacity:0.5">Esperando red...</span>';
+
+            return `<tr>
+              <td>${getStatusBadge(v.state)}</td>
+              <td class="mono">${v.name}</td>
+              <td>${ipDisplay}</td>
+              <td class="action-group">
+                <button class="btn btn-green btn-sm" onclick="startVM('${v.name}')" title="Iniciar"><span class="icon">play_arrow</span></button>
+                <button class="btn btn-gray btn-sm" onclick="stopVM('${v.name}')" title="Apagar"><span class="icon">stop</span></button>
+                <button class="btn btn-red btn-sm" onclick="deleteVM('${v.name}')" title="Eliminar"><span class="icon">delete</span></button>
+                <button class="btn btn-gray btn-sm" onclick="seleccionarIPSys('${v.name}', '${v.ip}')" title="Gestionar vía SSH"><span class="icon">terminal</span></button>
+                ${irBtn}
+              </td>
+            </tr>`;
+          }).join('');
+        }
+
+        // Render Otras
+        const tbodyOtras = document.getElementById('vms-table');
+        if (!otras || otras.length === 0) {
+          tbodyOtras.innerHTML = '<tr><td colspan="3" style="color:var(--text-muted);text-align:center">Sin máquinas nativas encontradas</td></tr>';
+        } else {
+          tbodyOtras.innerHTML = otras.map(v => {
+            const isOnlineNoIP = v.state === 'corriendo' && (!v.ip || v.ip === '');
+            const ipDisplay = v.ip
+              ? `<span class="mono">${v.ip}</span>`
+              : isOnlineNoIP
+                ? `<span style="color:var(--accent3);font-size:0.75rem;animation:pulse 1.5s infinite">Esperando red...</span>`
+                : `<span style="color:var(--text-muted)">N/A</span>`;
+
+            return `<tr>
+              <td>${getStatusBadge(v.state)}<div style="margin-top:4px;font-family:'Space Mono',monospace;font-size:0.8rem">${v.name}</div></td>
+              <td>${ipDisplay}</td>
+              <td class="action-group">
+                <button class="btn btn-green btn-sm" onclick="startVM('${v.name}')"><span class="icon">play_arrow</span></button>
+                <button class="btn btn-gray btn-sm" onclick="stopVM('${v.name}')"><span class="icon">stop</span></button>
+                <button class="btn btn-red btn-sm" onclick="deleteVM('${v.name}')"><span class="icon">delete</span></button>
+                <button class="btn btn-gray btn-sm" onclick="seleccionarIPSys('${v.name}', '${v.ip}')" ${!v.ip ? 'disabled title="Sin IP aún"' : ''}><span class="icon">terminal</span></button>
+              </td>
+            </tr>`;
+          }).join('');
+        }
+        // Actualizar selector de LBs y tabla de LBs por si alguno acaba de recibir su IP o cambiar de estado
+        renderLBs();
+        renderLBSelects();
+    } catch(e) { console.error("Error cargando VMs", e); }
   }
 
-  function assignNode() {
-    const lbIp = document.getElementById('select-lb').value;
-    const nodeName = document.getElementById('select-node').value;
-    if (!lbIp) return alert("Selecciona un balanceador");
-    if (!nodeName) return alert("No hay nodo válido para asignar");
-    const nodeData = window.activeHijas.find(h => h.name === nodeName);
-    if (!nodeData || !nodeData.ip) return alert("Este nodo aún no tiene IP asignada");
-    if (!asignaciones[lbIp].find(n => n.name === nodeName)) {
-      asignaciones[lbIp].push({ name: nodeData.name, ip: nodeData.ip, port: nodeData.port || "8081" });
-    }
-    renderAssignedNodes();
-    saveState();
-  }
-
-  function removeNode(lbIp, nodeName) {
-    asignaciones[lbIp] = asignaciones[lbIp].filter(n => n.name !== nodeName);
-    renderAssignedNodes();
-    saveState();
-  }
-
-  function editNodePort(lbIp, nodeName) {
-      if(!asignaciones[lbIp]) return;
-      const node = asignaciones[lbIp].find(n => n.name === nodeName);
-      if(!node) return;
-      const newPort = prompt("Escribe el nuevo puerto para el servidor " + nodeName + ":", node.port);
-      if(newPort !== null && newPort.trim() !== '') {
-          node.port = newPort.trim();
-          renderAssignedNodes();
-          saveState();
-      }
-  }
-
-  function renderAssignedNodes() {
-    const lbIp = document.getElementById('select-lb').value;
-    const tbody = document.getElementById('nodes-table');
-    if (!lbIp || !asignaciones[lbIp] || asignaciones[lbIp].length === 0) {
-      tbody.innerHTML = '<tr><td colspan="4" style="color:var(--muted)">Sin nodos asignados</td></tr>';
-      return;
-    }
-    tbody.innerHTML = asignaciones[lbIp].map(n => {
-        let ledClass = 'status-unk';
-        if (n.lastStatus === 'UP') ledClass = 'status-up';
-        if (n.lastStatus === 'DOWN') ledClass = 'status-down';
-        if (n.lastStatus === 'MAINT') ledClass = 'status-maint';
-
-        return '<tr>' +
-          '<td><span class="status-led ' + ledClass + '"></span>' + (n.lastStatus || 'UNK') + '</td>' +
-          '<td>' + n.name + '</td>' +
-          '<td>' + n.ip + ':' + n.port + '</td>' +
-          '<td><button class="btn btn-gray" style="background:#b8860b;margin-right:0.4rem;" onclick="editNodePort(\'' + lbIp + '\', \'' + n.name + '\')">✏️ Puerto</button><button class="btn btn-red" onclick="removeNode(\'' + lbIp + '\', \'' + n.name + '\')">Quitar</button></td>' +
-        '</tr>';
-    }).join('');
-  }
-
-  async function deployHAProxy() {
-    const lbIp = document.getElementById('select-lb').value;
-    if (!lbIp) return alert("No has seleccionado un balanceador al cual desplegar");
-    const out = document.getElementById('haproxy-output');
-    out.style.display = 'block';
-    out.textContent = 'Desplegando configuración por SSH y reiniciando el servicio...\n(Depende de la red, puede demorar unos segundos)';
-    
-    const payload = {
-      lbIp: lbIp,
-      servers: asignaciones[lbIp] || []
-    };
-    
+  async function loadDisks() {
     try {
-      const res = await fetch('/api/haproxy/apply', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json();
-      out.textContent = data.message;
-    } catch(e) {
-      out.textContent = "Error: " + e.message;
-    }
+        const res = await fetch('/api/disks');
+        const disks = await res.json();
+        const tbody = document.getElementById('disks-table');
+        
+        if (!disks || disks.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="3" style="color:var(--text-muted);text-align:center;padding:2rem;">Sin discos modo multiconexión detectados</td></tr>';
+          document.getElementById('disk-uuid').innerHTML = '<option value="">(Sin discos)</option>';
+          document.getElementById('lb-disk-uuid').innerHTML = '<option value="">(Sin discos)</option>';
+          return;
+        }
+        
+        const opts = '<option value="">-- Selecciona un disco multiconexión --</option>' + 
+                     disks.map(d => `<option value="${d.uuid}">${d.name} (${d.uuid.split('-')[0]})</option>`).join('');
+        document.getElementById('disk-uuid').innerHTML = opts;
+        document.getElementById('lb-disk-uuid').innerHTML = opts;
+        
+        tbody.innerHTML = disks.map(d =>
+          `<tr>
+            <td>
+                <strong>${d.name}</strong><br>
+                <span style="color:var(--text-muted);font-size:0.7rem;">UUID: ${d.uuid}</span>
+            </td>
+            <td style="color:var(--text-muted);font-size:0.7rem;max-width:200px;word-wrap:break-word;">${d.location}</td>
+            <td class="action-group">
+              <button class="btn btn-green btn-sm" onclick="promptDiskUsage('${d.uuid}')"><span class="icon">auto_awesome</span> Usar Plantilla</button>
+              <button class="btn btn-red btn-sm" onclick="deleteDisk('${d.uuid}')"><span class="icon">delete</span> Eliminar</button>
+            </td>
+          </tr>`
+        ).join('');
+    } catch(e) { console.error("Error discos", e); }
   }
+
+  // ================= UI INTERACTION FLOWS =================
+
+  function promptDiskUsage(uuid) {
+      openModal({
+          title: "Desplegar desde Plantilla",
+          desc: "Has seleccionado un disco maestro inmutable. ¿Qué tipo de instancia deseas aprovisionar basándote en este entorno?",
+          bodyHTML: `<div class="mono" style="padding:10px; background:rgba(0,0,0,0.4); border-radius:6px; margin: 10px 0; font-size:0.8rem; color:var(--text-muted)">UUID: ${uuid}</div>`,
+          buttons: [
+              {
+                  text: "🌐 Nodo de Aplicación Web", class: "btn-green",
+                  onClick: () => {
+                      document.getElementById('disk-uuid').value = uuid;
+                      switchView('deploy');
+                      showToast("Asignado", "UUID copiado al aprovisionador de Nodos Web", "info");
+                  }
+              },
+              {
+                  text: "🛡️ Balanceador HAProxy", class: "btn-blue",
+                  onClick: () => {
+                      document.getElementById('lb-disk-uuid').value = uuid;
+                      switchView('deploy');
+                      showToast("Asignado", "UUID copiado al aprovisionador HAProxy", "info");
+                  }
+              },
+              { text: "Cancelar", class: "btn-gray" }
+          ]
+      });
+  }
+
+  function seleccionarIPSys(nombre, ip) {
+    const input = document.getElementById('service-ip');
+    input.value = ip || '';
+    if (!ip) input.placeholder = `IP de ${nombre} (N/A)`;
+    switchView('ops');
+    input.focus();
+    showToast("Terminal SSH", `Objetivo apuntado a ${nombre}`, "info");
+  }
+
+  // ================= API & ACTIONS =================
 
   async function prepararVM(event) {
     event.preventDefault();
@@ -437,148 +911,58 @@
     const out  = document.getElementById('prepare-output');
 
     const formData = new FormData();
-    formData.append('execFile',    document.getElementById('exec-file').files[0]);
+    formData.append('execFile', document.getElementById('exec-file').files[0]);
     const zip = document.getElementById('zip-file').files[0];
     if (zip) formData.append('zipFile', zip);
-    formData.append('port',        document.getElementById('vm-port').value);
-    formData.append('templateVM',  document.getElementById('template-vm-name').value);
+    formData.append('port', document.getElementById('vm-port').value);
+    formData.append('templateVM', document.getElementById('template-vm-name').value);
     formData.append('newDiskName', document.getElementById('new-disk-name').value);
 
-    btn.disabled    = true;
-    btn.textContent = 'Procesando... (puede tardar ~2 min)';
+    btn.disabled = true;
+    btn.innerHTML = '⌛ Procesando pipeline...';
     out.style.display = 'block';
-    out.textContent   = 'Encendiendo plantilla y detectando IP via Guest Additions...\n';
+    out.textContent = '>> INICIANDO TAREA AUTOMATIZADA: ENCIENDO PLATFORMA...\n';
 
     try {
+      showToast("Operación en Curso", "Generando nueva plantilla inmutable...", "info");
       const res  = await fetch('/api/vm/prepare', { method: 'POST', body: formData });
       const data = await res.json();
-      out.textContent = data.message + (data.output ? '\n\nDetalles:\n' + data.output : '');
-      if (res.ok) { form.reset(); loadDisks(); }
+      out.textContent += data.message + (data.output ? '\n\n' + data.output : '');
+      if (res.ok) { 
+          form.reset(); 
+          loadDisks(); 
+          showToast("Éxito", "Pipeline completada exitosamente", "success");
+      } else {
+          showToast("Error", "El pipeline falló", "error");
+      }
     } catch (err) {
-      out.textContent = 'Error de conexión: ' + err.message;
+      out.textContent += '\n[ERROR CRÍTICO] ' + err.message;
+      showToast("Error de Conexión", err.message, "error");
     } finally {
-      btn.disabled    = false;
-      btn.textContent = 'Ejecutar Automatización';
+      btn.disabled = false;
+      btn.innerHTML = '⚙️ Iniciar Pipeline de Automatización';
     }
   }
 
-  async function loadDisks() {
-    const res   = await fetch('/api/disks');
-    const disks = await res.json();
-    const tbody = document.getElementById('disks-table');
-    if (!disks || disks.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="3" style="color:var(--muted)">Sin discos multiconexión</td></tr>';
-      return;
-    }
-    tbody.innerHTML = disks.map(d =>
-      '<tr>' +
-        '<td>' + d.name + '</td>' +
-        '<td style="color:var(--muted);font-size:0.7rem">' + d.location + '</td>' +
-        '<td>' +
-          '<button class="btn btn-green" onclick="fillUUID(\'' + d.uuid + '\')">Usar este disco</button> ' +
-          '<button class="btn btn-red"   onclick="deleteDisk(\'' + d.uuid + '\')">Eliminar</button>' +
-        '</td>' +
-      '</tr>'
-    ).join('');
-  }
+  async function createVM() {
+    const vmName   = document.getElementById('new-vm-name').value.trim();
+    const diskUUID = document.getElementById('disk-uuid').value.trim();
+    const out      = document.getElementById('create-output');
 
-  async function loadVMs() {
-    const res   = await fetch('/api/vms');
-    const vms   = await res.json();
-    
-    // Auto-actualizar IP si alguna máquina está corriendo pero no tiene IP
-    const needsPolling = vms.some(v => v.state === 'corriendo' && (!v.ip || v.ip === ''));
-    if (needsPolling && !ipCheckInterval) {
-      ipCheckInterval = setInterval(loadVMs, 5000);
-    } else if (!needsPolling && ipCheckInterval) {
-      clearInterval(ipCheckInterval);
-      ipCheckInterval = null;
-    }
+    if (!vmName || !diskUUID) return showToast("Aviso", "Faltan parámetros", "error");
 
-    const hijas = vms.filter(v => v.port && v.port !== '');
-    const otras = vms.filter(v => !v.port || v.port === '');
+    out.style.display = 'block'; out.textContent = 'Deploying...\n';
+    showToast("Desplegando", `Provisionando Nodo Web: ${vmName}`, "info");
 
-    window.activeHijas = hijas;
-    const sel = document.getElementById('select-node');
-    if (hijas.length > 0) {
-       sel.innerHTML = hijas.map(h => '<option value="' + h.name + '">' + h.name + ' (' + (h.ip?h.ip:'Sin IP') + ':' + h.port + ')</option>').join('');
-    } else {
-       sel.innerHTML = '<option value="">(Sin VMs disponibles)</option>';
-    }
+    const res  = await fetch('/api/vm/create', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vmName, diskUUID, port: "8081" }) // Puerto fijo app
+    });
+    const data = await res.json();
+    out.textContent += data.message;
 
-    const tbodyHijas = document.getElementById('vms-hijas-table');
-    if (!hijas || hijas.length === 0) {
-      tbodyHijas.innerHTML = '<tr><td colspan="4" style="color:var(--muted)">No hay máquinas virtuales hijas registradas</td></tr>';
-    } else {
-      tbodyHijas.innerHTML = hijas.map(v => {
-        const url   = 'http://' + (v.ip || 'localhost') + ':' + v.port;
-        const irBtn = (v.ip && v.state === 'corriendo')
-          ? '<a class="btn btn-blue" href="' + url + '" target="_blank">↗ Ir</a>'
-          : '<span class="btn btn-gray" style="opacity:0.4">↗ Ir</span>';
-        
-        const ipDisplay = v.ip ? v.ip : '<span style="opacity:0.5">N/A</span>';
-        const portDisplay = v.port ? v.port : '<span style="opacity:0.5">N/A</span>';
-        const stateColor = v.state === 'corriendo' ? 'var(--accent)' : 'var(--accent2)';
-        const stateDisplay = '<br><small style="color:' + stateColor + '">(' + v.state + ')</small>';
-
-        return '<tr>' +
-          '<td>' + v.name + stateDisplay + '</td>' +
-          '<td class="vm-ip">' + ipDisplay + '</td>' +
-          '<td class="vm-port">' + portDisplay + '</td>' +
-          '<td style="display:flex;gap:0.4rem;align-items:center;">' +
-            '<button class="btn btn-green" onclick="startVM(\'' + v.name + '\')">▶ Iniciar</button>' +
-            '<button class="btn btn-red"   onclick="stopVM(\'' + v.name + '\')">■ Apagar</button>' +
-            '<button class="btn btn-red"   onclick="deleteVM(\'' + v.name + '\')" style="background:#552222">🗑 Borrar</button>' +
-            '<button class="btn btn-gray"  onclick="seleccionarIP(\'' + v.name + '\', \'' + v.ip + '\')">🌐 Gestor</button>' +
-            irBtn +
-          '</td>' +
-        '</tr>';
-      }).join('');
-    }
-
-    const tbodyOtras = document.getElementById('vms-table');
-    if (!otras || otras.length === 0) {
-      tbodyOtras.innerHTML = '<tr><td colspan="4" style="color:var(--muted)">Sin otras VMs registradas</td></tr>';
-    } else {
-      tbodyOtras.innerHTML = otras.map(v => {
-        const stateColor = v.state === 'corriendo' ? 'var(--accent)' : 'var(--muted)';
-        const stateDisplay = '<br><small style="color:' + stateColor + '">(' + v.state + ')</small>';
-        const ipDisplay = v.ip ? v.ip : '<span style="opacity:0.5">N/A</span>';
-        
-        return '<tr>' +
-          '<td>' + v.name + stateDisplay + '</td>' +
-          '<td style="color:var(--muted);font-size:0.7rem">' + v.uuid + '</td>' +
-          '<td class="vm-ip">' + ipDisplay + '</td>' +
-          '<td style="display:flex;gap:0.4rem;align-items:center;">' +
-            '<button class="btn btn-green" onclick="startVM(\'' + v.name + '\')">▶ Iniciar</button>' +
-            '<button class="btn btn-red"   onclick="stopVM(\'' + v.name + '\')">■ Apagar</button>' +
-            '<button class="btn btn-red"   onclick="deleteVM(\'' + v.name + '\')" style="background:#552222">🗑 Borrar</button>' +
-            '<button class="btn btn-blue"  onclick="seleccionarIP(\'' + v.name + '\', \'' + v.ip + '\')">🌐 Gestor</button>' +
-          '</td>' +
-        '</tr>';
-      }).join('');
-    }
-  }
-
-  function fillUUID(uuid) {
-    if (confirm("¿Utilizar este disco maestro para una Máquina Hija de Aplicación?\n(Click en Cancelar si es para un Balanceador HAProxy)")) {
-        document.getElementById('disk-uuid').value = uuid;
-        document.getElementById('disk-uuid').scrollIntoView({ behavior: 'smooth', block: 'center' });
-    } else {
-        const lbInput = document.getElementById('lb-disk-uuid');
-        if (lbInput) {
-            lbInput.value = uuid;
-            lbInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
-    }
-  }
-
-  function seleccionarIP(nombre, ip) {
-    const input = document.getElementById('service-ip');
-    input.value = ip || '';
-    if (!ip) input.placeholder = 'IP de ' + nombre + ' — escríbela manualmente';
-    input.focus();
-    input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (res.ok) { showToast("Éxito", "Nodo Web provisionado", "success"); loadVMs(); }
+    else showToast("Fallo", data.message, "error");
   }
 
   async function createLBVM() {
@@ -586,121 +970,294 @@
     const diskUUID = document.getElementById('lb-disk-uuid').value.trim();
     const out      = document.getElementById('create-lb-output');
 
-    if (!vmName || !diskUUID) {
-      alert('Completa el nombre de la VM y el UUID del disco maestro de HAProxy');
-      return;
-    }
+    if (!vmName || !diskUUID) return showToast("Aviso", "Faltan parámetros", "error");
 
-    out.style.display = 'block';
-    out.textContent   = 'Provisionando Balanceador y esperando IP via Guest Additions...\n(hasta 90 segundos)';
+    out.style.display = 'block'; out.textContent = 'Deploying LB...\n';
+    showToast("Desplegando", `Provisionando LB: ${vmName}`, "info");
 
     const res  = await fetch('/api/vm/create', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ vmName, diskUUID, port: "" }) // Puerto vacío para diferenciar de las Hijas web
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vmName, diskUUID, port: "" })
     });
     const data = await res.json();
-    out.textContent = data.message || JSON.stringify(data);
+    out.textContent += data.message;
 
     if (res.ok && data.ip) {
-      // Auto-registrar en HAProxy localmente
+      // Auto-registro en panel frontend
       lbs.push({ name: vmName, ip: data.ip });
       if (!asignaciones[data.ip]) asignaciones[data.ip] = [];
-      renderLBs();
-      renderLBSelects();
-      saveState();
-      loadVMs(); // Actualizar las otras tablas
-      alert("¡Balanceador Aprovisionado y Registrado exitosamente!\nIP Interna: " + data.ip);
+      renderLBs(); renderLBSelects(); saveState(); loadVMs();
+      
+      showToast("Éxito", `LB Listo e integrado en gestor. IP: ${data.ip}`, "success");
+    } else if (res.ok) {
+        showToast("Advertencia", "LB Creado pero sin IP detectada por el momento.", "warn");
+        loadVMs();
+    } else {
+        showToast("Error", data.message, "error");
     }
   }
 
-  async function createVM() {
-    const vmName   = document.getElementById('new-vm-name').value.trim();
-    const diskUUID = document.getElementById('disk-uuid').value.trim();
-    const port     = "8081"; // Puerto estandarizado para VMs hijas
-    const out      = document.getElementById('create-output');
-
-    if (!vmName || !diskUUID) {
-      alert('Completa el nombre de la VM y el UUID del disco');
-      return;
-    }
-
-    out.style.display = 'block';
-    out.textContent   = 'Creando VM y esperando IP via Guest Additions...\n(hasta 90 segundos)';
-
-    const res  = await fetch('/api/vm/create', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ vmName, diskUUID, port })
-    });
-    const data = await res.json();
-    out.textContent = data.message || JSON.stringify(data);
-
-    if (res.ok) {
-      loadVMs();
-    }
+  // VM Controls
+  async function genericVMAction(name, actionName, endpoint) {
+      showToast("Comando Enviado", `Action: ${actionName} on ${name}`, "info");
+      const res = await fetch(endpoint, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ vmName: name })
+      });
+      const data = await res.json();
+      if(res.ok) { showToast("Respuesta", data.message, "success"); loadVMs(); }
+      else showToast("Error", data.message, "error");
   }
 
-  async function stopVM(name) {
-    const res  = await fetch('/api/vm/stop', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ vmName: name })
-    });
-    const data = await res.json();
-    alert(data.message);
-    loadVMs();
+  function startVM(name) { genericVMAction(name, 'START', '/api/vm/start'); }
+  function stopVM(name) { genericVMAction(name, 'STOP/ACPI', '/api/vm/stop'); }
+  
+  function deleteVM(name) {
+      openModal({
+          title: "⚠️ Destrucción de Instancia",
+          desc: `Estás a punto de aniquilar la instancia "${name}". Se purgarán todos los datos del diferencial local irremediablemente.`,
+          buttons: [
+              { text: "Confirmar Purga", class: "btn-red", onClick: () => genericVMAction(name, 'DELETE', '/api/vm/delete') },
+              { text: "Cancelar", class: "btn-gray" }
+          ]
+      });
   }
 
-  async function deleteVM(name) {
-    if (!confirm('¿Estás SEGURO de que deseas eliminar permanentemente la máquina "' + name + '" y destruir todos sus archivos del disco duro?\n\nEsta acción es irreversible.')) {
-      return;
-    }
-    const res  = await fetch('/api/vm/delete', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ vmName: name })
-    });
-    const data = await res.json();
-    alert(data.message);
-    if (res.ok) {
-      loadVMs(); // Gracias a la configuración reactiva de loadVMs obtenemos el nuevo estado
-    }
+  function deleteDisk(uuid) {
+      openModal({
+          title: "⚠️ Eliminar Plantilla",
+          desc: `Eliminar el disco maestro con UUID ${uuid}. (Asegúrate de que no haya hijas vivas usándolo).`,
+          buttons: [
+              { text: "Sí, Eliminar Disco", class: "btn-red", onClick: async () => {
+                  const res = await fetch('/api/disk/delete', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ diskUUID: uuid })
+                  });
+                  const d = await res.json();
+                  if(res.ok) { showToast("Eliminado", d.message, "success"); loadDisks(); }
+                  else showToast("Error", d.message, "error");
+              }},
+              { text: "Cancelar", class: "btn-gray"}
+          ]
+      });
   }
 
-  async function startVM(name) {
-    const res  = await fetch('/api/vm/start', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ vmName: name })
-    });
-    const data = await res.json();
-    alert(data.message);
-    loadVMs();
-  }
-
-  async function deleteDisk(uuid) {
-    if (!confirm('¿Eliminar este disco permanentemente?')) return;
-    const res  = await fetch('/api/disk/delete', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ diskUUID: uuid })
-    });
-    const data = await res.json();
-    alert(data.message);
-    loadDisks();
-  }
-
+  // Systemctl / Services
   async function serviceAction(action) {
-    const ip      = document.getElementById('service-ip').value.trim();
+    const ip = document.getElementById('service-ip').value.trim();
     const service = document.getElementById('service-name').value.trim();
-    const out     = document.getElementById('service-output');
-    if (!ip) { out.textContent = '⚠ Ingresa la IP de la VM primero.'; return; }
-    out.textContent = 'Ejecutando ' + action + ' en ' + ip + '...';
-    const res  = await fetch('/api/service', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ip, action, service })
-    });
-    const data = await res.json();
-    out.textContent = data.output || data.message || JSON.stringify(data);
+    const out = document.getElementById('service-output');
+    if (!ip) return showToast("Aviso", "Requiere Target IP", "error");
+    
+    out.textContent = `[${ip}] ssh > sudo systemctl ${action} ${service} ...\n`;
+    
+    try {
+        const res = await fetch('/api/service', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ip, action, service })
+        });
+        const data = await res.json();
+        out.textContent += '\n' + (data.output || data.message);
+    } catch(e) { out.textContent += '\n[ERROR] ' + e.message; }
   }
 
+  function addLB() {
+    const name = document.getElementById('lb-name').value.trim();
+    const ip   = document.getElementById('lb-ip').value.trim();
+    if (!name || !ip) return showToast("Aviso", "Completa Nombre e IP del balanceador", "error");
+    if (lbs.find(l => l.ip === ip)) return showToast("Aviso", "Ya existe un LB con esa IP", "warn");
+    lbs.push({ name, ip });
+    if (!asignaciones[ip]) asignaciones[ip] = [];
+    document.getElementById('lb-name').value = '';
+    document.getElementById('lb-ip').value   = '';
+    renderLBs();
+    renderLBSelects();
+    saveState();
+    showToast("Registrado", `Balanceador "${name}" (${ip}) agregado`, "success");
+  }
+
+  function editLB(ip) {
+    const lb = lbs.find(l => l.ip === ip);
+    if (!lb) return;
+    openModal({
+      title: "Editar Balanceador",
+      desc: `Cambia el nombre visible del LB con IP ${ip}`,
+      bodyHTML: `<div class="form-group" style="margin-top:1rem"><label>Nuevo nombre</label><input id="modal-lb-name" type="text" value="${lb.name}"></div>`,
+      buttons: [
+        { text: "Guardar", class: "btn-green", onClick: () => {
+            const n = document.getElementById('modal-lb-name').value.trim();
+            if (n) { lb.name = n; renderLBs(); renderLBSelects(); saveState(); showToast("Editado", "Nombre actualizado", "success"); }
+        }},
+        { text: "Cancelar", class: "btn-gray" }
+      ]
+    });
+  }
+
+
+  function renderLBs() {
+    const tbody = document.getElementById('lb-table');
+    if (lbs.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3" style="color:var(--text-muted);text-align:center;padding:1rem;">Lista vacía</td></tr>';
+      return;
+    }
+    // We render them on the dashboard
+    tbody.innerHTML = lbs.map(lb => {
+        const vm = (window.allVMs || []).find(v => v.ip === lb.ip);
+        const isOnline = vm && vm.state === 'corriendo';
+        const webBtn = isOnline ? `<a class="btn btn-blue btn-sm" href="http://${lb.ip}" target="_blank" title="Ir al Balanceador (Puerto 80)"><span class="icon">open_in_new</span> Web</a>` : '';
+        const statsBtn = isOnline ? `<a class="btn btn-gray btn-sm" href="http://${lb.ip}:8404" target="_blank" title="Ver Estadísticas (Puerto 8404)"><span class="icon">query_stats</span> Stats</a>` : '';
+
+        return `<tr>
+            <td class="mono" style="font-size:0.9rem">${lb.name}</td>
+            <td class="mono" style="color:var(--text-muted)">${lb.ip}</td>
+            <td class="action-group">
+                ${webBtn}
+                ${statsBtn}
+                <button class="btn btn-gray btn-sm" onclick="editLB('${lb.ip}')"><span class="icon">edit</span></button>
+                <button class="btn btn-red btn-sm" onclick="dropLBUI('${lb.ip}')" title="Desvincular"><span class="icon">link_off</span></button>
+                <button class="btn btn-gray btn-sm" onclick="seleccionarIPSys('${lb.name}', '${lb.ip}')"><span class="icon">terminal</span></button>
+            </td>
+        </tr>`;
+    }).join('');
+  }
+
+  function dropLBUI(ip) {
+      lbs = lbs.filter(l => l.ip !== ip);
+      delete asignaciones[ip];
+      renderLBs(); renderLBSelects(); renderAssignedNodes(); saveState();
+      showToast("Desvinculado", "LB eliminado de la interfaz local", "info");
+  }
+
+  function renderLBSelects() {
+    const sel = document.getElementById('select-lb');
+
+    // Solo mostrar LBs que tienen una VM corriendo con IP activa
+    const allVMs = window.allVMs || [];
+    const onlineLBs = lbs.filter(lb => {
+      const vm = allVMs.find(v => v.ip === lb.ip);
+      return vm && vm.state === 'corriendo' && vm.ip && vm.ip !== '';
+    });
+
+    if (onlineLBs.length === 0) {
+      sel.innerHTML = '<option value="">⚠️ Sin balanceadores online con IP activa</option>';
+      return;
+    }
+    
+    const curr = sel.value;
+    sel.innerHTML = '<option value="">-- Selecciona el LB Destino --</option>' + 
+                    onlineLBs.map(lb => `<option value="${lb.ip}">🟢 ${lb.name} — ${lb.ip}</option>`).join('');
+    if(curr && onlineLBs.find(l=>l.ip===curr)) sel.value = curr;
+    
+    sel.onchange = onLBMainSelectChange;
+    // Forzar actualización del botón al renderizar el select
+    onLBMainSelectChange();
+  }
+
+  function onLBMainSelectChange() {
+    const sel = document.getElementById('select-lb');
+    const btn = document.getElementById('btn-visit-lb');
+    const ip = sel.value;
+    
+    if (ip) {
+      btn.href = `http://${ip}`;
+      btn.style.display = 'inline-flex';
+    } else {
+      btn.style.display = 'none';
+    }
+
+    stopLBPolling(); 
+    renderAssignedNodes();
+    if (ip) startLBPolling(ip);
+  }
+
+  function startLBPolling(ip) {
+    stopLBPolling(); pollLBStatus(ip);
+    lbStatusInterval = setInterval(() => pollLBStatus(ip), 5000);
+  }
+
+  function stopLBPolling() { if (lbStatusInterval) { clearInterval(lbStatusInterval); lbStatusInterval = null; } }
+
+  async function pollLBStatus(ip) {
+    try {
+        const res = await fetch('/api/haproxy/status?ip=' + ip);
+        if (!res.ok) return;
+        const stats = await res.json();
+        if (asignaciones[ip]) {
+            asignaciones[ip].forEach(node => {
+                const s = stats.find(st => st.svname === node.name);
+                node.lastStatus = s ? s.status : 'UNK';
+            });
+            renderAssignedNodes();
+        }
+    } catch(e) {}
+  }
+
+  function assignNode() {
+    const lbIp = document.getElementById('select-lb').value;
+    const nodeName = document.getElementById('select-node').value;
+    if (!lbIp || !nodeName) return showToast("Aviso", "Selecciona LB y Nodo válidos", "warn");
+    
+    const nodeData = window.activeHijas.find(h => h.name === nodeName);
+    if (!nodeData || !nodeData.ip) return showToast("Aviso", "Nodo sin IP de subred", "error");
+    
+    if (!asignaciones[lbIp]) asignaciones[lbIp] = [];
+    if (!asignaciones[lbIp].find(n => n.name === nodeName)) {
+      asignaciones[lbIp].push({ name: nodeData.name, ip: nodeData.ip, port: nodeData.port || "8081", lastStatus: 'WAIT' });
+      renderAssignedNodes();
+      saveState();
+      showToast("Agregado", `Nodo ${nodeName} enlistado en reglas.`, "success");
+    }
+  }
+
+  function removeNode(lbIp, nodeName) {
+    asignaciones[lbIp] = asignaciones[lbIp].filter(n => n.name !== nodeName);
+    renderAssignedNodes(); saveState();
+  }
+
+  function renderAssignedNodes() {
+    const lbIp = document.getElementById('select-lb').value;
+    const tbody = document.getElementById('nodes-table');
+    if (!lbIp || !asignaciones[lbIp] || asignaciones[lbIp].length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3" style="color:var(--text-muted);text-align:center;padding:1rem;">Pool vacío</td></tr>';
+      return;
+    }
+    
+    tbody.innerHTML = asignaciones[lbIp].map(n => {
+        let sc = 'status-unk', tx = 'PINGING...';
+        if (n.lastStatus === 'UP') { sc = 'status-up'; tx = 'UP'; }
+        if (n.lastStatus === 'DOWN') { sc = 'status-down'; tx = 'DOWN'; }
+        if (n.lastStatus === 'MAINT') { sc = 'status-warn'; tx = 'MAIN'; }
+
+        return `<tr>
+          <td><span class="status-badge ${sc}"><span class="status-led"></span> ${tx}</span></td>
+          <td class="mono">${n.name}<br><small style="color:var(--text-muted)">${n.ip}:${n.port}</small></td>
+          <td class="action-group">
+            <button class="btn btn-red btn-sm" onclick="removeNode('${lbIp}', '${n.name}')"><span class="icon">link_off</span> Descartar</button>
+          </td>
+        </tr>`;
+    }).join('');
+  }
+
+  async function deployHAProxy() {
+    const lbIp = document.getElementById('select-lb').value;
+    if (!lbIp) return showToast("Aviso", "Selecciona LB destino primero", "error");
+    
+    const out = document.getElementById('haproxy-output');
+    out.style.display = 'block'; out.textContent = '[SSH] Compilando e inyectando proxy rules en ' + lbIp + '...';
+    
+    try {
+      const res = await fetch('/api/haproxy/apply', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lbIp: lbIp, servers: asignaciones[lbIp] || [] })
+      });
+      const data = await res.json();
+      out.textContent += '\n' + data.message;
+      if(res.ok) showToast("Configuración Inyectada", "El demonio HAProxy ha sido recargado en caliente.", "success");
+      else showToast("Fallo Remoto", "Error SSH o Systemctl al ejecutar.", "error");
+    } catch(e) { out.textContent += '\nError: ' + e.message; showToast("Error", e.message, "error"); }
+  }
+
+  // ================= INIT =================
   loadDisks();
   loadVMs();
   fetchState();
