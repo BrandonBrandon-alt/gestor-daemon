@@ -461,6 +461,81 @@ func handleDeleteVM(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, Response{Success: true, Message: "La máquina " + body.VMName + " ha sido eliminada permanentemente del sistema"})
 }
 
+func handleApplyHAProxy(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		LBIp    string `json:"lbIp"`
+		Servers []struct {
+			Name string `json:"name"`
+			IP   string `json:"ip"`
+			Port string `json:"port"`
+		} `json:"servers"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonError(w, "JSON inválido: "+err.Error())
+		return
+	}
+	if body.LBIp == "" {
+		jsonError(w, "La IP del balanceador es requerida")
+		return
+	}
+
+	// 1. Generate haproxy.cfg content
+	var cfg strings.Builder
+	cfg.WriteString("global\n")
+	cfg.WriteString("    log /dev/log local0\n")
+	cfg.WriteString("    log /dev/log local1 notice\n")
+	cfg.WriteString("    chroot /var/lib/haproxy\n")
+	cfg.WriteString("    stats socket /run/haproxy/admin.sock mode 660 level admin expose-fd listeners\n")
+	cfg.WriteString("    stats timeout 30s\n")
+	cfg.WriteString("    user haproxy\n")
+	cfg.WriteString("    group haproxy\n")
+	cfg.WriteString("    daemon\n\n")
+
+	cfg.WriteString("defaults\n")
+	cfg.WriteString("    log global\n")
+	cfg.WriteString("    mode http\n")
+	cfg.WriteString("    option httplog\n")
+	cfg.WriteString("    option dontlognull\n")
+	cfg.WriteString("    timeout connect 5000\n")
+	cfg.WriteString("    timeout client  50000\n")
+	cfg.WriteString("    timeout server  50000\n\n")
+
+	cfg.WriteString("listen stats\n")
+	cfg.WriteString("    bind *:8404\n")
+	cfg.WriteString("    stats enable\n")
+	cfg.WriteString("    stats uri /\n")
+	cfg.WriteString("    stats refresh 5s\n\n")
+
+	cfg.WriteString("frontend http_front\n")
+	cfg.WriteString("    bind *:80\n")
+	cfg.WriteString("    default_backend http_back\n\n")
+
+	cfg.WriteString("backend http_back\n")
+	cfg.WriteString("    balance roundrobin\n")
+
+	for _, s := range body.Servers {
+		if s.IP != "" && s.Port != "" {
+			cfg.WriteString(fmt.Sprintf("    server %s %s:%s check\n", s.Name, s.IP, s.Port))
+		}
+	}
+
+	// 2. Upload to remote HAProxy via createRemoteFile
+	tempRemotePath := "/etc/haproxy/haproxy.cfg"
+	if err := createRemoteFile(body.LBIp, tempRemotePath, cfg.String()); err != nil {
+		jsonError(w, "Error inyectando cfg vía SSH: "+err.Error())
+		return
+	}
+
+	// 3. Restart HAProxy
+	if out, err := runSSH(body.LBIp, "sudo systemctl restart haproxy"); err != nil {
+		jsonError(w, fmt.Sprintf("Error reiniciando HAProxy: %v | Salida: %s", err, out))
+		return
+	}
+
+	jsonOK(w, Response{Success: true, Message: "Balanceador en " + body.LBIp + " actualizado correctamente con " + fmt.Sprintf("%d", len(body.Servers)) + " servidores traseros."})
+}
+
 func handleStartVM(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		VMName string `json:"vmName"`
@@ -766,6 +841,7 @@ func main() {
 	http.HandleFunc("/api/service", handleService)
 	http.HandleFunc("/api/vm/prepare", handlePrepareVM)
 	http.HandleFunc("/api/disk/delete", handleDeleteDisk)
+	http.HandleFunc("/api/haproxy/apply", handleApplyHAProxy)
 
 	fmt.Println("Gestor de demonios corriendo en http://localhost:8090")
 	go displayVMStatusTable()
@@ -928,10 +1004,152 @@ const htmlContent = `<!DOCTYPE html>
     <div class="output" id="service-output">// La salida aparecerá aquí...</div>
   </div>
 
+  <div class="card">
+    <h2><span>//</span>Gestor de Balanceadores (HAProxy)</h2>
+    <div class="form-group">
+      <label>Nombre del Balanceador</label>
+      <input type="text" id="lb-name" placeholder="ej. LB-Principal">
+    </div>
+    <div class="form-group">
+      <label>IP del Balanceador</label>
+      <input type="text" id="lb-ip" placeholder="ej. 192.168.1.100">
+    </div>
+    <button class="btn btn-blue" onclick="addLB()">+ Registrar Balanceador</button>
+    
+    <table style="margin-top:1rem;">
+      <thead><tr><th>NOMBRE</th><th>IP</th><th>ACCIONES</th></tr></thead>
+      <tbody id="lb-table">
+        <tr><td colspan="3" style="color:var(--muted)">Sin balanceadores</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2><span>//</span>Reglas de Nodos (Backends)</h2>
+    <div class="form-group">
+      <label>1. Seleccionar Balanceador Destino</label>
+      <select id="select-lb" onchange="renderAssignedNodes()" style="width:100%;padding:0.4rem;background:var(--bg);color:var(--text);border:1px solid var(--border)">
+        <option value="">(Primero registra un LB)</option>
+      </select>
+    </div>
+    <div class="form-group" style="display:flex;gap:0.5rem;align-items:flex-end;">
+      <div style="flex:1">
+        <label>2. Seleccionar Servidor Activo</label>
+        <select id="select-node" style="width:100%;padding:0.4rem;background:var(--bg);color:var(--text);border:1px solid var(--border)">
+           <option value="">(Buscando VMs activas...)</option>
+        </select>
+      </div>
+      <button class="btn btn-green" onclick="assignNode()">+ Adjuntar</button>
+    </div>
+
+    <table style="margin-top:1rem;">
+      <thead><tr><th>SERVIDOR (NODO)</th><th>IP:PUERTO</th><th>ACCIONES</th></tr></thead>
+      <tbody id="nodes-table">
+        <tr><td colspan="3" style="color:var(--muted)">Sin nodos asignados</td></tr>
+      </tbody>
+    </table>
+
+    <button class="btn btn-accent" style="width:100%; margin-top:1rem; font-size:1rem; font-weight:bold; padding:0.8rem;" onclick="deployHAProxy()">🚀 Desplegar Configuración a HAProxy</button>
+    <div id="haproxy-output" class="output" style="margin-top:1rem;display:none"></div>
+  </div>
+
 </div>
 
 <script>
   let ipCheckInterval = null;
+  let lbs = [];
+  let asignaciones = {};
+  window.activeHijas = [];
+
+  function addLB() {
+    const name = document.getElementById('lb-name').value.trim();
+    const ip = document.getElementById('lb-ip').value.trim();
+    if (!name || !ip) return alert("Completa Nombre e IP");
+    lbs.push({ name, ip });
+    if (!asignaciones[ip]) asignaciones[ip] = [];
+    document.getElementById('lb-name').value = '';
+    document.getElementById('lb-ip').value = '';
+    renderLBs();
+    renderLBSelects();
+  }
+
+  function deleteLB(ip) {
+    lbs = lbs.filter(lb => lb.ip !== ip);
+    delete asignaciones[ip];
+    renderLBs();
+    renderLBSelects();
+    renderAssignedNodes();
+  }
+
+  function renderLBs() {
+    const tbody = document.getElementById('lb-table');
+    if (lbs.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3" style="color:var(--muted)">Sin balanceadores</td></tr>';
+      return;
+    }
+    tbody.innerHTML = lbs.map(lb => '<tr><td>' + lb.name + '</td><td>' + lb.ip + '</td><td><button class="btn btn-red" onclick="deleteLB(\'' + lb.ip + '\')">Borrar</button></td></tr>').join('');
+  }
+
+  function renderLBSelects() {
+    const sel = document.getElementById('select-lb');
+    if (lbs.length === 0) {
+      sel.innerHTML = '<option value="">(Primero registra un LB)</option>';
+      return;
+    }
+    sel.innerHTML = '<option value="">-- Seleccionar --</option>' + lbs.map(lb => '<option value="' + lb.ip + '">' + lb.name + ' (' + lb.ip + ')</option>').join('');
+  }
+
+  function assignNode() {
+    const lbIp = document.getElementById('select-lb').value;
+    const nodeName = document.getElementById('select-node').value;
+    if (!lbIp) return alert("Selecciona un balanceador");
+    if (!nodeName) return alert("No hay nodo válido para asignar");
+    const nodeData = window.activeHijas.find(h => h.name === nodeName);
+    if (!nodeData || !nodeData.ip) return alert("Este nodo aún no tiene IP asignada");
+    if (!asignaciones[lbIp].find(n => n.name === nodeName)) {
+      asignaciones[lbIp].push({ name: nodeData.name, ip: nodeData.ip, port: nodeData.port || "8081" });
+    }
+    renderAssignedNodes();
+  }
+
+  function removeNode(lbIp, nodeName) {
+    asignaciones[lbIp] = asignaciones[lbIp].filter(n => n.name !== nodeName);
+    renderAssignedNodes();
+  }
+
+  function renderAssignedNodes() {
+    const lbIp = document.getElementById('select-lb').value;
+    const tbody = document.getElementById('nodes-table');
+    if (!lbIp || !asignaciones[lbIp] || asignaciones[lbIp].length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3" style="color:var(--muted)">Sin nodos asignados</td></tr>';
+      return;
+    }
+    tbody.innerHTML = asignaciones[lbIp].map(n => '<tr><td>' + n.name + '</td><td>' + n.ip + ':' + n.port + '</td><td><button class="btn btn-red" onclick="removeNode(\'' + lbIp + '\', \'' + n.name + '\')">Quitar</button></td></tr>').join('');
+  }
+
+  async function deployHAProxy() {
+    const lbIp = document.getElementById('select-lb').value;
+    if (!lbIp) return alert("No has seleccionado un balanceador al cual desplegar");
+    const out = document.getElementById('haproxy-output');
+    out.style.display = 'block';
+    out.textContent = 'Desplegando configuración por SSH y reiniciando el servicio...\n(Depende de la red, puede demorar unos segundos)';
+    
+    const payload = {
+      lbIp: lbIp,
+      servers: asignaciones[lbIp] || []
+    };
+    
+    try {
+      const res = await fetch('/api/haproxy/apply', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      out.textContent = data.message;
+    } catch(e) {
+      out.textContent = "Error: " + e.message;
+    }
+  }
 
   async function prepararVM(event) {
     event.preventDefault();
@@ -1000,6 +1218,14 @@ const htmlContent = `<!DOCTYPE html>
 
     const hijas = vms.filter(v => v.port && v.port !== '');
     const otras = vms.filter(v => !v.port || v.port === '');
+
+    window.activeHijas = hijas;
+    const sel = document.getElementById('select-node');
+    if (hijas.length > 0) {
+       sel.innerHTML = hijas.map(h => '<option value="' + h.name + '">' + h.name + ' (' + (h.ip?h.ip:'Sin IP') + ':' + h.port + ')</option>').join('');
+    } else {
+       sel.innerHTML = '<option value="">(Sin VMs disponibles)</option>';
+    }
 
     const tbodyHijas = document.getElementById('vms-hijas-table');
     if (!hijas || hijas.length === 0) {
