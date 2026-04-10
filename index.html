@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gestor de Demonios — systemd</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Inter:wght@300;400;600&display=swap');
+  :root {
+    --bg: #0d0d0d; --surface: #161616; --border: #2a2a2a;
+    --accent: #00ff88; --accent2: #ff4466; --accent3: #4488ff;
+    --text: #e8e8e8; --muted: #666;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; min-height: 100vh; padding: 2rem; }
+  header { display: flex; align-items: center; gap: 1rem; margin-bottom: 2.5rem; border-bottom: 1px solid var(--border); padding-bottom: 1.5rem; }
+  header h1 { font-family: 'Space Mono', monospace; font-size: 1.4rem; color: var(--accent); }
+  header span { font-size: 0.75rem; color: var(--muted); font-family: 'Space Mono', monospace; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.5rem; }
+  .card h2 { font-family: 'Space Mono', monospace; font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1.2rem; }
+  .card h2 span { color: var(--accent); margin-right: 0.5rem; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+  th { text-align: left; padding: 0.5rem 0.75rem; color: var(--muted); font-weight: 400; font-size: 0.75rem; border-bottom: 1px solid var(--border); }
+  td { padding: 0.6rem 0.75rem; border-bottom: 1px solid #1a1a1a; font-family: 'Space Mono', monospace; font-size: 0.8rem; }
+  tr:hover td { background: #1c1c1c; }
+  .btn { padding: 0.3rem 0.75rem; border: none; border-radius: 4px; font-family: 'Space Mono', monospace; font-size: 0.7rem; cursor: pointer; transition: opacity 0.15s; text-decoration: none; display: inline-block; line-height: 1.6; }
+  .btn:hover { opacity: 0.8; }
+  .btn-green { background: var(--accent); color: #000; }
+  .btn-red   { background: var(--accent2); color: #fff; }
+  .btn-blue  { background: var(--accent3); color: #fff; }
+  .btn-gray  { background: #2a2a2a; color: var(--text); }
+  .form-group { margin-bottom: 1rem; }
+  label { display: block; font-size: 0.75rem; color: var(--muted); margin-bottom: 0.3rem; font-family: 'Space Mono', monospace; }
+  input { width: 100%; background: #111; border: 1px solid var(--border); border-radius: 4px; padding: 0.5rem 0.75rem; color: var(--text); font-family: 'Space Mono', monospace; font-size: 0.8rem; outline: none; transition: border-color 0.15s; }
+  input:focus { border-color: var(--accent); }
+  .output { background: #0a0a0a; border: 1px solid var(--border); border-radius: 4px; padding: 1rem; font-family: 'Space Mono', monospace; font-size: 0.75rem; color: var(--accent); white-space: pre-wrap; max-height: 300px; overflow-y: auto; min-height: 60px; }
+  .service-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }
+  .full { grid-column: 1 / -1; }
+  .ip-input { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+  .ip-input input { flex: 1; }
+  .vm-ip   { color: var(--accent); }
+  .vm-port { color: var(--accent3); }
+  
+  /* Indicadores de salud HAProxy */
+  .status-led {
+    display: inline-block;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    margin-right: 6px;
+    box-shadow: 0 0 5px rgba(0,0,0,0.5);
+  }
+  .status-up    { background: var(--accent);  box-shadow: 0 0 8px var(--accent); }
+  .status-down  { background: var(--accent2); box-shadow: 0 0 8px var(--accent2); }
+  .status-maint { background: #ffaa00; }
+  .status-unk   { background: #555; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="dot"></div>
+  <h1>gestor-daemon</h1>
+  <span>// systemd · VirtualBox · SSH · Guest Additions</span>
+</header>
+
+<div class="grid">
+
+  <div class="card full">
+    <h2><span>//</span>Preparar Máquina Virtual (Plantilla)</h2>
+    <form id="prepare-vm-form" onsubmit="prepararVM(event)">
+      <div class="grid" style="grid-template-columns:1fr 1fr;margin-bottom:0">
+        <div class="form-group">
+          <label>Archivo ejecutable</label>
+          <input type="file" id="exec-file" required>
+        </div>
+        <div class="form-group">
+          <label>Número de puerto</label>
+          <input type="number" id="vm-port" placeholder="ej. 8081" required>
+        </div>
+        <div class="form-group">
+          <label>Archivos adicionales (.zip)</label>
+          <input type="file" id="zip-file" accept=".zip">
+        </div>
+        <div class="form-group">
+          <label>Máquina virtual (plantilla)</label>
+          <input type="text" id="template-vm-name" placeholder="ej. plantillaServer" required>
+        </div>
+        <div class="form-group">
+          <label>Nombre disco multiconexión</label>
+          <input type="text" id="new-disk-name" placeholder="ej. disco-srvimg" required>
+        </div>
+      </div>
+      <button type="submit" class="btn btn-green" id="btn-preparar" style="margin-top:1rem">
+        Ejecutar Automatización
+      </button>
+      <div id="prepare-output" class="output" style="margin-top:1rem;display:none"></div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2><span>//</span>Discos Multiconexión</h2>
+    <table>
+      <thead><tr><th>Nombre</th><th>Ruta</th><th>Acciones</th></tr></thead>
+      <tbody id="disks-table">
+        <tr><td colspan="3" style="color:var(--muted)">Cargando...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2><span>//</span>Crear Máquina Virtual Hija</h2>
+    <div class="form-group">
+      <label>Nombre de la nueva VM</label>
+      <input type="text" id="new-vm-name" placeholder="ej. Srv-img1">
+    </div>
+    <div class="form-group">
+      <label>UUID del disco multiconexión</label>
+      <input type="text" id="disk-uuid" placeholder="Se llena al hacer clic en Usar este disco">
+    </div>
+    <button class="btn btn-green" onclick="createVM()">+ Crear e iniciar VM</button>
+    <div id="create-output" class="output" style="margin-top:1rem;display:none"></div>
+  </div>
+
+  <div class="card full">
+    <h2><span>//</span>Máquinas Virtuales Hijas</h2>
+    <table>
+      <thead>
+        <tr><th>Nombre</th><th>Dirección IP</th><th>Puerto</th><th>Acciones</th></tr>
+      </thead>
+      <tbody id="vms-hijas-table">
+        <tr><td colspan="4" style="color:var(--muted)">Las VMs creadas aparecerán aquí</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card full">
+    <h2><span>//</span>Máquinas Virtuales Registradas (VirtualBox)</h2>
+    <table>
+      <thead><tr><th>Nombre</th><th>UUID</th><th>Dirección IP</th><th>Acciones</th></tr></thead>
+      <tbody id="vms-table">
+        <tr><td colspan="4" style="color:var(--muted)">Cargando...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card full">
+    <h2><span>//</span>Gestión del Servicio (systemctl)</h2>
+    <div class="ip-input">
+      <input type="text" id="service-ip" placeholder="IP de la VM  ej. 192.168.1.50">
+      <input type="text" id="service-name" placeholder="Nombre del servicio" value="app-custom.service">
+    </div>
+    <div class="service-actions">
+      <button class="btn btn-green" onclick="serviceAction('start')">▶ Iniciar</button>
+      <button class="btn btn-red"   onclick="serviceAction('stop')">■ Detener</button>
+      <button class="btn btn-blue"  onclick="serviceAction('restart')">↺ Reiniciar</button>
+      <button class="btn btn-gray"  onclick="serviceAction('enable')">✓ Habilitar</button>
+      <button class="btn btn-gray"  onclick="serviceAction('disable')">✗ Deshabilitar</button>
+      <button class="btn btn-gray"  onclick="serviceAction('status')">? Estado</button>
+      <button class="btn btn-gray"  onclick="serviceAction('logs')">≡ Logs</button>
+    </div>
+    <div class="output" id="service-output">// La salida aparecerá aquí...</div>
+  </div>
+
+  <div class="card">
+    <h2><span>//</span>Gestor de Balanceadores (HAProxy)</h2>
+    <div class="form-group">
+      <label>Nombre del Balanceador</label>
+      <input type="text" id="lb-name" placeholder="ej. LB-Principal">
+    </div>
+    <div class="form-group">
+      <label>IP del Balanceador</label>
+      <input type="text" id="lb-ip" placeholder="ej. 192.168.1.100">
+    </div>
+    <button class="btn btn-blue" onclick="addLB()">+ Registrar Balanceador</button>
+    
+    <table style="margin-top:1rem;">
+      <thead><tr><th>NOMBRE</th><th>IP</th><th>ACCIONES</th></tr></thead>
+      <tbody id="lb-table">
+        <tr><td colspan="3" style="color:var(--muted)">Sin balanceadores</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2><span>//</span>Reglas de Nodos (Backends)</h2>
+    <div class="form-group">
+      <label>1. Seleccionar Balanceador Destino</label>
+      <select id="select-lb" onchange="renderAssignedNodes()" style="width:100%;padding:0.4rem;background:var(--bg);color:var(--text);border:1px solid var(--border)">
+        <option value="">(Primero registra un LB)</option>
+      </select>
+    </div>
+    <div class="form-group" style="display:flex;gap:0.5rem;align-items:flex-end;">
+      <div style="flex:1">
+        <label>2. Seleccionar Servidor Activo</label>
+        <select id="select-node" style="width:100%;padding:0.4rem;background:var(--bg);color:var(--text);border:1px solid var(--border)">
+           <option value="">(Buscando VMs activas...)</option>
+        </select>
+      </div>
+      <button class="btn btn-green" onclick="assignNode()">+ Adjuntar</button>
+    </div>
+
+    <table style="margin-top:1rem;">
+      <thead><tr><th>ESTADO</th><th>SERVIDOR (NODO)</th><th>IP:PUERTO</th><th>ACCIONES</th></tr></thead>
+      <tbody id="nodes-table">
+        <tr><td colspan="4" style="color:var(--muted)">Sin nodos asignados</td></tr>
+      </tbody>
+    </table>
+
+    <button class="btn btn-accent" style="width:100%; margin-top:1rem; font-size:1rem; font-weight:bold; padding:0.8rem;" onclick="deployHAProxy()">🚀 Desplegar Configuración a HAProxy</button>
+    <div id="haproxy-output" class="output" style="margin-top:1rem;display:none"></div>
+  </div>
+
+</div>
+
+<script>
+  let ipCheckInterval = null;
+  let lbs = [];
+  let asignaciones = {};
+  let lbStatusInterval = null;
+  window.activeHijas = [];
+
+  async function fetchState() {
+      try {
+          const res = await fetch('/api/haproxy/state');
+          if(!res.ok) return;
+          const data = await res.json();
+          if(data.lbs) lbs = data.lbs;
+          if(data.asignaciones) asignaciones = data.asignaciones;
+          renderLBs();
+          renderLBSelects();
+          renderAssignedNodes();
+      } catch(e) {
+          console.error("Error cargando el estado inicial", e);
+      }
+  }
+
+  async function saveState() {
+      try {
+          await fetch('/api/haproxy/state', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ lbs, asignaciones })
+          });
+      } catch(e) {
+          console.error("Error guardando el estado", e);
+      }
+  }
+
+  function addLB() {
+    const name = document.getElementById('lb-name').value.trim();
+    const ip = document.getElementById('lb-ip').value.trim();
+    if (!name || !ip) return alert("Completa Nombre e IP");
+    lbs.push({ name, ip });
+    if (!asignaciones[ip]) asignaciones[ip] = [];
+    document.getElementById('lb-name').value = '';
+    document.getElementById('lb-ip').value = '';
+    renderLBs();
+    renderLBSelects();
+    saveState();
+  }
+
+  function deleteLB(ip) {
+    lbs = lbs.filter(lb => lb.ip !== ip);
+    delete asignaciones[ip];
+    renderLBs();
+    renderLBSelects();
+    renderAssignedNodes();
+    saveState();
+  }
+
+  function editLB(ip) {
+      const lb = lbs.find(l => l.ip === ip);
+      if(!lb) return;
+      const newName = prompt("Escribe el nuevo nombre para este balanceador (" + ip + "):", lb.name);
+      if(newName !== null && newName.trim() !== '') {
+          lb.name = newName.trim();
+          renderLBs();
+          renderLBSelects();
+          saveState();
+      }
+  }
+
+  function renderLBs() {
+    const tbody = document.getElementById('lb-table');
+    if (lbs.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3" style="color:var(--muted)">Sin balanceadores</td></tr>';
+      return;
+    }
+    tbody.innerHTML = lbs.map(lb => '<tr><td>' + lb.name + '</td><td>' + lb.ip + '</td><td><button class="btn btn-gray" style="background:#b8860b;margin-right:0.4rem;" onclick="editLB(\'' + lb.ip + '\')">✏️ Editar</button><button class="btn btn-red" onclick="deleteLB(\'' + lb.ip + '\')">Borrar</button></td></tr>').join('');
+  }
+
+  function renderLBSelects() {
+    const sel = document.getElementById('select-lb');
+    if (lbs.length === 0) {
+      sel.innerHTML = '<option value="">(Primero registra un LB)</option>';
+      return;
+    }
+    sel.innerHTML = '<option value="">-- Seleccionar --</option>' + lbs.map(lb => '<option value="' + lb.ip + '">' + lb.name + ' (' + lb.ip + ')</option>').join('');
+    
+    // Al cambiar el LB, reiniciamos el sondeo
+    sel.onchange = () => {
+        stopLBPolling();
+        renderAssignedNodes();
+        if (sel.value) startLBPolling(sel.value);
+    };
+  }
+
+  function startLBPolling(ip) {
+    stopLBPolling();
+    pollLBStatus(ip);
+    lbStatusInterval = setInterval(() => pollLBStatus(ip), 5000);
+  }
+
+  function stopLBPolling() {
+    if (lbStatusInterval) {
+        clearInterval(lbStatusInterval);
+        lbStatusInterval = null;
+    }
+  }
+
+  async function pollLBStatus(ip) {
+    try {
+        const res = await fetch('/api/haproxy/status?ip=' + ip);
+        if (!res.ok) return;
+        const stats = await res.json();
+        // Guardar estados en los nodos asignados localmente
+        if (asignaciones[ip]) {
+            asignaciones[ip].forEach(node => {
+                const s = stats.find(st => st.svname === node.name);
+                node.lastStatus = s ? s.status : 'UNK';
+            });
+            renderAssignedNodes();
+        }
+    } catch(e) { console.error("Error sondeo HAProxy:", e); }
+  }
+
+  function assignNode() {
+    const lbIp = document.getElementById('select-lb').value;
+    const nodeName = document.getElementById('select-node').value;
+    if (!lbIp) return alert("Selecciona un balanceador");
+    if (!nodeName) return alert("No hay nodo válido para asignar");
+    const nodeData = window.activeHijas.find(h => h.name === nodeName);
+    if (!nodeData || !nodeData.ip) return alert("Este nodo aún no tiene IP asignada");
+    if (!asignaciones[lbIp].find(n => n.name === nodeName)) {
+      asignaciones[lbIp].push({ name: nodeData.name, ip: nodeData.ip, port: nodeData.port || "8081" });
+    }
+    renderAssignedNodes();
+    saveState();
+  }
+
+  function removeNode(lbIp, nodeName) {
+    asignaciones[lbIp] = asignaciones[lbIp].filter(n => n.name !== nodeName);
+    renderAssignedNodes();
+    saveState();
+  }
+
+  function editNodePort(lbIp, nodeName) {
+      if(!asignaciones[lbIp]) return;
+      const node = asignaciones[lbIp].find(n => n.name === nodeName);
+      if(!node) return;
+      const newPort = prompt("Escribe el nuevo puerto para el servidor " + nodeName + ":", node.port);
+      if(newPort !== null && newPort.trim() !== '') {
+          node.port = newPort.trim();
+          renderAssignedNodes();
+          saveState();
+      }
+  }
+
+  function renderAssignedNodes() {
+    const lbIp = document.getElementById('select-lb').value;
+    const tbody = document.getElementById('nodes-table');
+    if (!lbIp || !asignaciones[lbIp] || asignaciones[lbIp].length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" style="color:var(--muted)">Sin nodos asignados</td></tr>';
+      return;
+    }
+    tbody.innerHTML = asignaciones[lbIp].map(n => {
+        let ledClass = 'status-unk';
+        if (n.lastStatus === 'UP') ledClass = 'status-up';
+        if (n.lastStatus === 'DOWN') ledClass = 'status-down';
+        if (n.lastStatus === 'MAINT') ledClass = 'status-maint';
+
+        return '<tr>' +
+          '<td><span class="status-led ' + ledClass + '"></span>' + (n.lastStatus || 'UNK') + '</td>' +
+          '<td>' + n.name + '</td>' +
+          '<td>' + n.ip + ':' + n.port + '</td>' +
+          '<td><button class="btn btn-gray" style="background:#b8860b;margin-right:0.4rem;" onclick="editNodePort(\'' + lbIp + '\', \'' + n.name + '\')">✏️ Puerto</button><button class="btn btn-red" onclick="removeNode(\'' + lbIp + '\', \'' + n.name + '\')">Quitar</button></td>' +
+        '</tr>';
+    }).join('');
+  }
+
+  async function deployHAProxy() {
+    const lbIp = document.getElementById('select-lb').value;
+    if (!lbIp) return alert("No has seleccionado un balanceador al cual desplegar");
+    const out = document.getElementById('haproxy-output');
+    out.style.display = 'block';
+    out.textContent = 'Desplegando configuración por SSH y reiniciando el servicio...\n(Depende de la red, puede demorar unos segundos)';
+    
+    const payload = {
+      lbIp: lbIp,
+      servers: asignaciones[lbIp] || []
+    };
+    
+    try {
+      const res = await fetch('/api/haproxy/apply', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      out.textContent = data.message;
+    } catch(e) {
+      out.textContent = "Error: " + e.message;
+    }
+  }
+
+  async function prepararVM(event) {
+    event.preventDefault();
+    const form = document.getElementById('prepare-vm-form');
+    const btn  = document.getElementById('btn-preparar');
+    const out  = document.getElementById('prepare-output');
+
+    const formData = new FormData();
+    formData.append('execFile',    document.getElementById('exec-file').files[0]);
+    const zip = document.getElementById('zip-file').files[0];
+    if (zip) formData.append('zipFile', zip);
+    formData.append('port',        document.getElementById('vm-port').value);
+    formData.append('templateVM',  document.getElementById('template-vm-name').value);
+    formData.append('newDiskName', document.getElementById('new-disk-name').value);
+
+    btn.disabled    = true;
+    btn.textContent = 'Procesando... (puede tardar ~2 min)';
+    out.style.display = 'block';
+    out.textContent   = 'Encendiendo plantilla y detectando IP via Guest Additions...\n';
+
+    try {
+      const res  = await fetch('/api/vm/prepare', { method: 'POST', body: formData });
+      const data = await res.json();
+      out.textContent = data.message + (data.output ? '\n\nDetalles:\n' + data.output : '');
+      if (res.ok) { form.reset(); loadDisks(); }
+    } catch (err) {
+      out.textContent = 'Error de conexión: ' + err.message;
+    } finally {
+      btn.disabled    = false;
+      btn.textContent = 'Ejecutar Automatización';
+    }
+  }
+
+  async function loadDisks() {
+    const res   = await fetch('/api/disks');
+    const disks = await res.json();
+    const tbody = document.getElementById('disks-table');
+    if (!disks || disks.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3" style="color:var(--muted)">Sin discos multiconexión</td></tr>';
+      return;
+    }
+    tbody.innerHTML = disks.map(d =>
+      '<tr>' +
+        '<td>' + d.name + '</td>' +
+        '<td style="color:var(--muted);font-size:0.7rem">' + d.location + '</td>' +
+        '<td>' +
+          '<button class="btn btn-green" onclick="fillUUID(\'' + d.uuid + '\')">Usar este disco</button> ' +
+          '<button class="btn btn-red"   onclick="deleteDisk(\'' + d.uuid + '\')">Eliminar</button>' +
+        '</td>' +
+      '</tr>'
+    ).join('');
+  }
+
+  async function loadVMs() {
+    const res   = await fetch('/api/vms');
+    const vms   = await res.json();
+    
+    // Auto-actualizar IP si alguna máquina está corriendo pero no tiene IP
+    const needsPolling = vms.some(v => v.state === 'corriendo' && (!v.ip || v.ip === ''));
+    if (needsPolling && !ipCheckInterval) {
+      ipCheckInterval = setInterval(loadVMs, 5000);
+    } else if (!needsPolling && ipCheckInterval) {
+      clearInterval(ipCheckInterval);
+      ipCheckInterval = null;
+    }
+
+    const hijas = vms.filter(v => v.port && v.port !== '');
+    const otras = vms.filter(v => !v.port || v.port === '');
+
+    window.activeHijas = hijas;
+    const sel = document.getElementById('select-node');
+    if (hijas.length > 0) {
+       sel.innerHTML = hijas.map(h => '<option value="' + h.name + '">' + h.name + ' (' + (h.ip?h.ip:'Sin IP') + ':' + h.port + ')</option>').join('');
+    } else {
+       sel.innerHTML = '<option value="">(Sin VMs disponibles)</option>';
+    }
+
+    const tbodyHijas = document.getElementById('vms-hijas-table');
+    if (!hijas || hijas.length === 0) {
+      tbodyHijas.innerHTML = '<tr><td colspan="4" style="color:var(--muted)">No hay máquinas virtuales hijas registradas</td></tr>';
+    } else {
+      tbodyHijas.innerHTML = hijas.map(v => {
+        const url   = 'http://' + (v.ip || 'localhost') + ':' + v.port;
+        const irBtn = (v.ip && v.state === 'corriendo')
+          ? '<a class="btn btn-blue" href="' + url + '" target="_blank">↗ Ir</a>'
+          : '<span class="btn btn-gray" style="opacity:0.4">↗ Ir</span>';
+        
+        const ipDisplay = v.ip ? v.ip : '<span style="opacity:0.5">N/A</span>';
+        const portDisplay = v.port ? v.port : '<span style="opacity:0.5">N/A</span>';
+        const stateColor = v.state === 'corriendo' ? 'var(--accent)' : 'var(--accent2)';
+        const stateDisplay = '<br><small style="color:' + stateColor + '">(' + v.state + ')</small>';
+
+        return '<tr>' +
+          '<td>' + v.name + stateDisplay + '</td>' +
+          '<td class="vm-ip">' + ipDisplay + '</td>' +
+          '<td class="vm-port">' + portDisplay + '</td>' +
+          '<td style="display:flex;gap:0.4rem;align-items:center;">' +
+            '<button class="btn btn-green" onclick="startVM(\'' + v.name + '\')">▶ Iniciar</button>' +
+            '<button class="btn btn-red"   onclick="stopVM(\'' + v.name + '\')">■ Apagar</button>' +
+            '<button class="btn btn-red"   onclick="deleteVM(\'' + v.name + '\')" style="background:#552222">🗑 Borrar</button>' +
+            '<button class="btn btn-gray"  onclick="seleccionarIP(\'' + v.name + '\', \'' + v.ip + '\')">🌐 Gestor</button>' +
+            irBtn +
+          '</td>' +
+        '</tr>';
+      }).join('');
+    }
+
+    const tbodyOtras = document.getElementById('vms-table');
+    if (!otras || otras.length === 0) {
+      tbodyOtras.innerHTML = '<tr><td colspan="4" style="color:var(--muted)">Sin otras VMs registradas</td></tr>';
+    } else {
+      tbodyOtras.innerHTML = otras.map(v => {
+        const stateColor = v.state === 'corriendo' ? 'var(--accent)' : 'var(--muted)';
+        const stateDisplay = '<br><small style="color:' + stateColor + '">(' + v.state + ')</small>';
+        const ipDisplay = v.ip ? v.ip : '<span style="opacity:0.5">N/A</span>';
+        
+        return '<tr>' +
+          '<td>' + v.name + stateDisplay + '</td>' +
+          '<td style="color:var(--muted);font-size:0.7rem">' + v.uuid + '</td>' +
+          '<td class="vm-ip">' + ipDisplay + '</td>' +
+          '<td style="display:flex;gap:0.4rem;align-items:center;">' +
+            '<button class="btn btn-green" onclick="startVM(\'' + v.name + '\')">▶ Iniciar</button>' +
+            '<button class="btn btn-red"   onclick="stopVM(\'' + v.name + '\')">■ Apagar</button>' +
+            '<button class="btn btn-red"   onclick="deleteVM(\'' + v.name + '\')" style="background:#552222">🗑 Borrar</button>' +
+            '<button class="btn btn-blue"  onclick="seleccionarIP(\'' + v.name + '\', \'' + v.ip + '\')">🌐 Gestor</button>' +
+          '</td>' +
+        '</tr>';
+      }).join('');
+    }
+  }
+
+  function fillUUID(uuid) { document.getElementById('disk-uuid').value = uuid; }
+
+  function seleccionarIP(nombre, ip) {
+    const input = document.getElementById('service-ip');
+    input.value = ip || '';
+    if (!ip) input.placeholder = 'IP de ' + nombre + ' — escríbela manualmente';
+    input.focus();
+    input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  async function createVM() {
+    const vmName   = document.getElementById('new-vm-name').value.trim();
+    const diskUUID = document.getElementById('disk-uuid').value.trim();
+    const port     = "8081"; // Puerto estandarizado para VMs hijas
+    const out      = document.getElementById('create-output');
+
+    if (!vmName || !diskUUID) {
+      alert('Completa el nombre de la VM y el UUID del disco');
+      return;
+    }
+
+    out.style.display = 'block';
+    out.textContent   = 'Creando VM y esperando IP via Guest Additions...\n(hasta 90 segundos)';
+
+    const res  = await fetch('/api/vm/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vmName, diskUUID, port })
+    });
+    const data = await res.json();
+    out.textContent = data.message || JSON.stringify(data);
+
+    if (res.ok) {
+      loadVMs();
+    }
+  }
+
+  async function stopVM(name) {
+    const res  = await fetch('/api/vm/stop', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vmName: name })
+    });
+    const data = await res.json();
+    alert(data.message);
+    loadVMs();
+  }
+
+  async function deleteVM(name) {
+    if (!confirm('¿Estás SEGURO de que deseas eliminar permanentemente la máquina "' + name + '" y destruir todos sus archivos del disco duro?\n\nEsta acción es irreversible.')) {
+      return;
+    }
+    const res  = await fetch('/api/vm/delete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vmName: name })
+    });
+    const data = await res.json();
+    alert(data.message);
+    if (res.ok) {
+      loadVMs(); // Gracias a la configuración reactiva de loadVMs obtenemos el nuevo estado
+    }
+  }
+
+  async function startVM(name) {
+    const res  = await fetch('/api/vm/start', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vmName: name })
+    });
+    const data = await res.json();
+    alert(data.message);
+    loadVMs();
+  }
+
+  async function deleteDisk(uuid) {
+    if (!confirm('¿Eliminar este disco permanentemente?')) return;
+    const res  = await fetch('/api/disk/delete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ diskUUID: uuid })
+    });
+    const data = await res.json();
+    alert(data.message);
+    loadDisks();
+  }
+
+  async function serviceAction(action) {
+    const ip      = document.getElementById('service-ip').value.trim();
+    const service = document.getElementById('service-name').value.trim();
+    const out     = document.getElementById('service-output');
+    if (!ip) { out.textContent = '⚠ Ingresa la IP de la VM primero.'; return; }
+    out.textContent = 'Ejecutando ' + action + ' en ' + ip + '...';
+    const res  = await fetch('/api/service', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ip, action, service })
+    });
+    const data = await res.json();
+    out.textContent = data.output || data.message || JSON.stringify(data);
+  }
+
+  loadDisks();
+  loadVMs();
+  fetchState();
+</script>
+</body>
+</html>`

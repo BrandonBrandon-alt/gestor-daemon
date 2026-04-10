@@ -1,0 +1,1 @@
+{"lbs":[{"name":"servidorBalanceador","ip":"192.168.1.150"}],"asignaciones":{"192.168.1.150":[{"name":"servidorImagenes","ip":"192.168.1.70","port":"8081","lastStatus":"UP"},{"name":"servidorImagenes2","ip":"192.168.1.81","port":"8081","lastStatus":"UNK"},{"name":"servidorImagenes3","ip":"192.168.1.141","port":"8081"}]}}
