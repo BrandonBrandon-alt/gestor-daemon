@@ -9,7 +9,10 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
+	"sync"
+	"text/tabwriter"
 	"time"
 
 	scp "github.com/bramvdbogaerde/go-scp"
@@ -130,7 +133,7 @@ func runVBox(args ...string) (string, error) {
 func getVMIP(vmName string) (string, error) {
 	fmt.Printf("Esperando IP de '%s' via Guest Additions...\n", vmName)
 	for i := 0; i < 18; i++ {
-		out, err := runVBox("guestproperty", "get", vmName, "/VirtualBox/GuestInfo/Net/0/V4/IP")
+		out, err := runVBoxQuiet("guestproperty", "get", vmName, "/VirtualBox/GuestInfo/Net/0/V4/IP")
 		if err == nil && strings.Contains(out, "Value:") {
 			parts := strings.Split(out, "Value:")
 			if len(parts) > 1 {
@@ -145,6 +148,109 @@ func getVMIP(vmName string) (string, error) {
 		time.Sleep(5 * time.Second)
 	}
 	return "", fmt.Errorf("tiempo agotado esperando IP de '%s'", vmName)
+}
+
+func runVBoxQuiet(args ...string) (string, error) {
+	out, err := exec.Command(vboxManage, args...).CombinedOutput()
+	return string(out), err
+}
+
+func fetchVMDetails(name, uuid string) map[string]string {
+	stateOut, _ := runVBoxQuiet("showvminfo", name, "--machinereadable")
+	state := "desconocido"
+	for _, l := range strings.Split(strings.ReplaceAll(stateOut, "\r\n", "\n"), "\n") {
+		if strings.HasPrefix(l, "VMState=") {
+			state = strings.TrimSpace(strings.Trim(strings.TrimPrefix(l, "VMState="), "\""))
+			switch state {
+			case "running":
+				state = "corriendo"
+			case "poweroff":
+				state = "detenida"
+			case "aborted":
+				state = "error (abortada)"
+			case "saved":
+				state = "guardada"
+			case "paused":
+				state = "pausada"
+			}
+			break
+		}
+	}
+
+	ipOut, _ := runVBoxQuiet("guestproperty", "get", name, "/VirtualBox/GuestInfo/Net/0/V4/IP")
+	ip := ""
+	if strings.Contains(ipOut, "Value:") {
+		ip = strings.TrimSpace(strings.Split(ipOut, "Value:")[1])
+	}
+
+	portOut, _ := runVBoxQuiet("guestproperty", "get", name, "/Gestor/Port")
+	port := ""
+	if strings.Contains(portOut, "Value:") {
+		port = strings.TrimSpace(strings.Split(portOut, "Value:")[1])
+	}
+
+	return map[string]string{"name": name, "uuid": uuid, "state": state, "ip": ip, "port": port}
+}
+
+func displayVMStatusTable() {
+	fmt.Println("\n=== ESTADO DEL ENTORNO DE MÁQUINAS VIRTUALES ===")
+	out, err := runVBoxQuiet("list", "vms")
+	if err != nil || strings.TrimSpace(out) == "" {
+		fmt.Println("(Sin máquinas virtuales registradas)")
+		fmt.Println("====================================================\n")
+		return
+	}
+
+	lines := strings.Split(strings.ReplaceAll(strings.TrimSpace(out), "\r\n", "\n"), "\n")
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "NOMBRE\tESTADO\tIP\tPUERTO\t")
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	type rowInfo struct{ name, state, ip, port string }
+	var rows []rowInfo
+
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, " ", 2)
+		name := strings.Trim(parts[0], "\"")
+
+		wg.Add(1)
+		go func(n string) {
+			defer wg.Done()
+			d := fetchVMDetails(n, "")
+			mu.Lock()
+			rows = append(rows, rowInfo{
+				name:  d["name"],
+				state: d["state"],
+				ip:    d["ip"],
+				port:  d["port"],
+			})
+			mu.Unlock()
+		}(name)
+	}
+	wg.Wait()
+
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i].name < rows[j].name
+	})
+
+	for _, r := range rows {
+		ip := r.ip
+		if ip == "" {
+			ip = "N/A"
+		}
+		port := r.port
+		if port == "" {
+			port = "N/A"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t\n", r.name, r.state, ip, port)
+	}
+
+	w.Flush()
+	fmt.Println("====================================================\n")
 }
 
 // ─── Estructuras JSON ────────────────────────────────────────────────────────
@@ -163,13 +269,17 @@ type Disk struct {
 // ─── Handlers API ────────────────────────────────────────────────────────────
 
 func handleListVMs(w http.ResponseWriter, r *http.Request) {
-	out, err := runVBox("list", "vms")
+	out, err := runVBoxQuiet("list", "vms")
 	if err != nil {
 		jsonError(w, "Error listando VMs: "+err.Error())
 		return
 	}
-	lines := strings.Split(strings.TrimSpace(out), "\n")
+	lines := strings.Split(strings.ReplaceAll(strings.TrimSpace(out), "\r\n", "\n"), "\n")
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
 	var vms []map[string]string
+
 	for _, line := range lines {
 		if line == "" {
 			continue
@@ -180,8 +290,22 @@ func handleListVMs(w http.ResponseWriter, r *http.Request) {
 		if len(parts) > 1 {
 			uuid = strings.Trim(parts[1], "{}")
 		}
-		vms = append(vms, map[string]string{"name": name, "uuid": uuid})
+
+		wg.Add(1)
+		go func(n, u string) {
+			defer wg.Done()
+			d := fetchVMDetails(n, u)
+			mu.Lock()
+			vms = append(vms, d)
+			mu.Unlock()
+		}(name, uuid)
 	}
+	wg.Wait()
+
+	sort.Slice(vms, func(i, j int) bool {
+		return vms[i]["name"] < vms[j]["name"]
+	})
+
 	jsonOK(w, vms)
 }
 
@@ -258,6 +382,13 @@ func handleCreateVM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Guardar el puerto como propiedad para leerlo luego en la tabla de estado
+	if body.Port != "" {
+		runVBoxQuiet("guestproperty", "set", body.VMName, "/Gestor/Port", body.Port)
+	}
+
+	go displayVMStatusTable()
+
 	jsonOK(w, map[string]string{
 		"success": "true",
 		"message": "VM " + body.VMName + " creada e iniciada — IP: " + ip,
@@ -284,7 +415,48 @@ func handleStopVM(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "Error apagando VM: "+out)
 		return
 	}
+
+	go func() {
+		time.Sleep(3 * time.Second)
+		displayVMStatusTable()
+	}()
+
 	jsonOK(w, Response{Success: true, Message: "Señal de apagado enviada a " + body.VMName})
+}
+
+func handleDeleteVM(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		VMName string `json:"vmName"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonError(w, "JSON inválido: "+err.Error())
+		return
+	}
+	if body.VMName == "" {
+		jsonError(w, "vmName es requerido")
+		return
+	}
+
+	// 1. Forzar apagado primero
+	runVBoxQuiet("controlvm", body.VMName, "poweroff")
+
+	// 2. Esperar 3 segundos para que los procesos se liberen
+	time.Sleep(3 * time.Second)
+
+	// 3. Destruir y eliminar todos sus archivos
+	out, err := runVBoxQuiet("unregistervm", body.VMName, "--delete-all")
+	if err != nil {
+		// Respaldos posibles según la versión de VirtualBox
+		out2, err2 := runVBoxQuiet("unregistervm", body.VMName, "--delete")
+		if err2 != nil {
+			jsonError(w, "Error eliminando VM: "+out+" | Respaldo: "+out2)
+			return
+		}
+	}
+
+	go displayVMStatusTable()
+
+	jsonOK(w, Response{Success: true, Message: "La máquina " + body.VMName + " ha sido eliminada permanentemente del sistema"})
 }
 
 func handleStartVM(w http.ResponseWriter, r *http.Request) {
@@ -300,6 +472,9 @@ func handleStartVM(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "Error iniciando VM: "+out)
 		return
 	}
+
+	go displayVMStatusTable()
+
 	jsonOK(w, Response{Success: true, Message: "VM " + body.VMName + " iniciada"})
 }
 
@@ -585,11 +760,13 @@ func main() {
 	http.HandleFunc("/api/vm/create", handleCreateVM)
 	http.HandleFunc("/api/vm/stop", handleStopVM)
 	http.HandleFunc("/api/vm/start", handleStartVM)
+	http.HandleFunc("/api/vm/delete", handleDeleteVM)
 	http.HandleFunc("/api/service", handleService)
 	http.HandleFunc("/api/vm/prepare", handlePrepareVM)
 	http.HandleFunc("/api/disk/delete", handleDeleteDisk)
 
 	fmt.Println("Gestor de demonios corriendo en http://localhost:8090")
+	go displayVMStatusTable()
 	log.Fatal(http.ListenAndServe(":8090", nil))
 }
 
@@ -705,10 +882,6 @@ const htmlContent = `<!DOCTYPE html>
       <label>UUID del disco multiconexión</label>
       <input type="text" id="disk-uuid" placeholder="Se llena al hacer clic en Usar este disco">
     </div>
-    <div class="form-group">
-      <label>Puerto de la aplicación web</label>
-      <input type="number" id="new-vm-port" placeholder="ej. 8081">
-    </div>
     <button class="btn btn-green" onclick="createVM()">+ Crear e iniciar VM</button>
     <div id="create-output" class="output" style="margin-top:1rem;display:none"></div>
   </div>
@@ -756,7 +929,7 @@ const htmlContent = `<!DOCTYPE html>
 </div>
 
 <script>
-  const vmsHijas = [];
+  let ipCheckInterval = null;
 
   async function prepararVM(event) {
     event.preventDefault();
@@ -813,56 +986,76 @@ const htmlContent = `<!DOCTYPE html>
   async function loadVMs() {
     const res   = await fetch('/api/vms');
     const vms   = await res.json();
-    const tbody = document.getElementById('vms-table');
-    if (!vms || vms.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="3" style="color:var(--muted)">Sin VMs registradas</td></tr>';
-      return;
+    
+    // Auto-actualizar IP si alguna máquina está corriendo pero no tiene IP
+    const needsPolling = vms.some(v => v.state === 'corriendo' && (!v.ip || v.ip === ''));
+    if (needsPolling && !ipCheckInterval) {
+      ipCheckInterval = setInterval(loadVMs, 5000);
+    } else if (!needsPolling && ipCheckInterval) {
+      clearInterval(ipCheckInterval);
+      ipCheckInterval = null;
     }
-    tbody.innerHTML = vms.map(v =>
-      '<tr>' +
-        '<td>' + v.name + '</td>' +
-        '<td style="color:var(--muted);font-size:0.7rem">' + v.uuid + '</td>' +
-        '<td style="display:flex;gap:0.4rem">' +
-          '<button class="btn btn-green" onclick="startVM(\'' + v.name + '\')">▶ Iniciar</button>' +
-          '<button class="btn btn-red"   onclick="stopVM(\'' + v.name + '\')">■ Apagar</button>' +
-          '<button class="btn btn-blue"  onclick="seleccionarIP(\'' + v.name + '\')">🌐 Gestor</button>' +
-        '</td>' +
-      '</tr>'
-    ).join('');
-  }
 
-  function renderVMsHijas() {
-    const tbody = document.getElementById('vms-hijas-table');
-    if (vmsHijas.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="4" style="color:var(--muted)">Las VMs creadas aparecerán aquí</td></tr>';
-      return;
+    const hijas = vms.filter(v => v.port && v.port !== '');
+    const otras = vms.filter(v => !v.port || v.port === '');
+
+    const tbodyHijas = document.getElementById('vms-hijas-table');
+    if (!hijas || hijas.length === 0) {
+      tbodyHijas.innerHTML = '<tr><td colspan="4" style="color:var(--muted)">No hay máquinas virtuales hijas registradas</td></tr>';
+    } else {
+      tbodyHijas.innerHTML = hijas.map(v => {
+        const url   = 'http://' + (v.ip || 'localhost') + ':' + v.port;
+        const irBtn = (v.ip && v.state === 'corriendo')
+          ? '<a class="btn btn-blue" href="' + url + '" target="_blank">↗ Ir</a>'
+          : '<span class="btn btn-gray" style="opacity:0.4">↗ Ir</span>';
+        
+        const ipDisplay = v.ip ? v.ip : '<span style="opacity:0.5">N/A</span>';
+        const portDisplay = v.port ? v.port : '<span style="opacity:0.5">N/A</span>';
+        const stateColor = v.state === 'corriendo' ? 'var(--accent)' : 'var(--accent2)';
+        const stateDisplay = '<br><small style="color:' + stateColor + '">(' + v.state + ')</small>';
+
+        return '<tr>' +
+          '<td>' + v.name + stateDisplay + '</td>' +
+          '<td class="vm-ip">' + ipDisplay + '</td>' +
+          '<td class="vm-port">' + portDisplay + '</td>' +
+          '<td style="display:flex;gap:0.4rem;align-items:center;">' +
+            '<button class="btn btn-green" onclick="startVM(\'' + v.name + '\')">▶ Iniciar</button>' +
+            '<button class="btn btn-red"   onclick="stopVM(\'' + v.name + '\')">■ Apagar</button>' +
+            '<button class="btn btn-red"   onclick="deleteVM(\'' + v.name + '\')" style="background:#552222">🗑 Borrar</button>' +
+            '<button class="btn btn-gray"  onclick="seleccionarIP(\'' + v.name + '\', \'' + v.ip + '\')">🌐 Gestor</button>' +
+            irBtn +
+          '</td>' +
+        '</tr>';
+      }).join('');
     }
-    tbody.innerHTML = vmsHijas.map(v => {
-      const url   = 'http://' + v.ip + ':' + v.port;
-      const irBtn = v.ip
-        ? '<a class="btn btn-blue" href="' + url + '" target="_blank">↗ Ir</a>'
-        : '<span class="btn btn-gray" style="opacity:0.4">↗ Ir</span>';
-      return '<tr>' +
-        '<td>' + v.name + '</td>' +
-        '<td class="vm-ip">'   + (v.ip   || '—') + '</td>' +
-        '<td class="vm-port">' + (v.port || '—') + '</td>' +
-        '<td style="display:flex;gap:0.4rem">' +
-          '<button class="btn btn-green" onclick="startVM(\'' + v.name + '\')">▶ Iniciar</button>' +
-          '<button class="btn btn-red"   onclick="stopVM(\'' + v.name + '\')">■ Apagar</button>' +
-          '<button class="btn btn-gray"  onclick="seleccionarIP(\'' + v.name + '\')">🌐 Gestor</button>' +
-          irBtn +
-        '</td>' +
-      '</tr>';
-    }).join('');
+
+    const tbodyOtras = document.getElementById('vms-table');
+    if (!otras || otras.length === 0) {
+      tbodyOtras.innerHTML = '<tr><td colspan="3" style="color:var(--muted)">Sin otras VMs registradas</td></tr>';
+    } else {
+      tbodyOtras.innerHTML = otras.map(v => {
+        const stateColor = v.state === 'corriendo' ? 'var(--accent)' : 'var(--muted)';
+        const stateDisplay = '<br><small style="color:' + stateColor + '">(' + v.state + ')</small>';
+        return '<tr>' +
+          '<td>' + v.name + stateDisplay + '</td>' +
+          '<td style="color:var(--muted);font-size:0.7rem">' + v.uuid + '</td>' +
+          '<td style="display:flex;gap:0.4rem;align-items:center;">' +
+            '<button class="btn btn-green" onclick="startVM(\'' + v.name + '\')">▶ Iniciar</button>' +
+            '<button class="btn btn-red"   onclick="stopVM(\'' + v.name + '\')">■ Apagar</button>' +
+            '<button class="btn btn-red"   onclick="deleteVM(\'' + v.name + '\')" style="background:#552222">🗑 Borrar</button>' +
+            '<button class="btn btn-blue"  onclick="seleccionarIP(\'' + v.name + '\', \'' + v.ip + '\')">🌐 Gestor</button>' +
+          '</td>' +
+        '</tr>';
+      }).join('');
+    }
   }
 
   function fillUUID(uuid) { document.getElementById('disk-uuid').value = uuid; }
 
-  function seleccionarIP(nombre) {
-    const vm    = vmsHijas.find(v => v.name === nombre);
+  function seleccionarIP(nombre, ip) {
     const input = document.getElementById('service-ip');
-    input.value = vm ? vm.ip : '';
-    if (!vm) input.placeholder = 'IP de ' + nombre + ' — escríbela manualmente';
+    input.value = ip || '';
+    if (!ip) input.placeholder = 'IP de ' + nombre + ' — escríbela manualmente';
     input.focus();
     input.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
@@ -870,11 +1063,11 @@ const htmlContent = `<!DOCTYPE html>
   async function createVM() {
     const vmName   = document.getElementById('new-vm-name').value.trim();
     const diskUUID = document.getElementById('disk-uuid').value.trim();
-    const port     = document.getElementById('new-vm-port').value.trim();
+    const port     = "8081"; // Puerto estandarizado para VMs hijas
     const out      = document.getElementById('create-output');
 
-    if (!vmName || !diskUUID || !port) {
-      alert('Completa el nombre de la VM, el UUID del disco y el puerto');
+    if (!vmName || !diskUUID) {
+      alert('Completa el nombre de la VM y el UUID del disco');
       return;
     }
 
@@ -889,12 +1082,7 @@ const htmlContent = `<!DOCTYPE html>
     const data = await res.json();
     out.textContent = data.message || JSON.stringify(data);
 
-    if (res.ok && data.ip) {
-      const idx   = vmsHijas.findIndex(v => v.name === vmName);
-      const entry = { name: vmName, ip: data.ip, port: data.port || port };
-      if (idx >= 0) vmsHijas[idx] = entry;
-      else vmsHijas.push(entry);
-      renderVMsHijas();
+    if (res.ok) {
       loadVMs();
     }
   }
@@ -907,6 +1095,21 @@ const htmlContent = `<!DOCTYPE html>
     const data = await res.json();
     alert(data.message);
     loadVMs();
+  }
+
+  async function deleteVM(name) {
+    if (!confirm('¿Estás SEGURO de que deseas eliminar permanentemente la máquina "' + name + '" y destruir todos sus archivos del disco duro?\n\nEsta acción es irreversible.')) {
+      return;
+    }
+    const res  = await fetch('/api/vm/delete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vmName: name })
+    });
+    const data = await res.json();
+    alert(data.message);
+    if (res.ok) {
+      loadVMs(); // Gracias a la configuración reactiva de loadVMs obtenemos el nuevo estado
+    }
   }
 
   async function startVM(name) {
@@ -946,7 +1149,6 @@ const htmlContent = `<!DOCTYPE html>
 
   loadDisks();
   loadVMs();
-  renderVMsHijas();
 </script>
 </body>
 </html>`
