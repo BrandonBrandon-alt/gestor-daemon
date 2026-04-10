@@ -166,6 +166,20 @@
   </div>
 
   <div class="card">
+    <h2><span>//</span>Crear Balanceador desde Cero</h2>
+    <div class="form-group">
+      <label>Nombre del Nuevo Balanceador (VM)</label>
+      <input type="text" id="new-lb-vm-name" placeholder="ej. LB-Produccion">
+    </div>
+    <div class="form-group">
+      <label>UUID del Disco Maestro HAProxy</label>
+      <input type="text" id="lb-disk-uuid" placeholder="Se llena al hacer clic en Usar este disco">
+    </div>
+    <button class="btn btn-green" style="width:100%;font-weight:bold" onclick="createLBVM()">+ Clonar, Encender y Registrar LB</button>
+    <div id="create-lb-output" class="output" style="margin-top:1rem;display:none"></div>
+  </div>
+
+  <div class="card">
     <h2><span>//</span>Gestor de Balanceadores (HAProxy)</h2>
     <div class="form-group">
       <label>Nombre del Balanceador</label>
@@ -546,7 +560,18 @@
     }
   }
 
-  function fillUUID(uuid) { document.getElementById('disk-uuid').value = uuid; }
+  function fillUUID(uuid) {
+    if (confirm("¿Utilizar este disco maestro para una Máquina Hija de Aplicación?\n(Click en Cancelar si es para un Balanceador HAProxy)")) {
+        document.getElementById('disk-uuid').value = uuid;
+        document.getElementById('disk-uuid').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } else {
+        const lbInput = document.getElementById('lb-disk-uuid');
+        if (lbInput) {
+            lbInput.value = uuid;
+            lbInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }
+  }
 
   function seleccionarIP(nombre, ip) {
     const input = document.getElementById('service-ip');
@@ -554,6 +579,39 @@
     if (!ip) input.placeholder = 'IP de ' + nombre + ' — escríbela manualmente';
     input.focus();
     input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  async function createLBVM() {
+    const vmName   = document.getElementById('new-lb-vm-name').value.trim();
+    const diskUUID = document.getElementById('lb-disk-uuid').value.trim();
+    const out      = document.getElementById('create-lb-output');
+
+    if (!vmName || !diskUUID) {
+      alert('Completa el nombre de la VM y el UUID del disco maestro de HAProxy');
+      return;
+    }
+
+    out.style.display = 'block';
+    out.textContent   = 'Provisionando Balanceador y esperando IP via Guest Additions...\n(hasta 90 segundos)';
+
+    const res  = await fetch('/api/vm/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vmName, diskUUID, port: "" }) // Puerto vacío para diferenciar de las Hijas web
+    });
+    const data = await res.json();
+    out.textContent = data.message || JSON.stringify(data);
+
+    if (res.ok && data.ip) {
+      // Auto-registrar en HAProxy localmente
+      lbs.push({ name: vmName, ip: data.ip });
+      if (!asignaciones[data.ip]) asignaciones[data.ip] = [];
+      renderLBs();
+      renderLBSelects();
+      saveState();
+      loadVMs(); // Actualizar las otras tablas
+      alert("¡Balanceador Aprovisionado y Registrado exitosamente!\nIP Interna: " + data.ip);
+    }
   }
 
   async function createVM() {
@@ -648,4 +706,4 @@
   fetchState();
 </script>
 </body>
-</html>`
+</html>
