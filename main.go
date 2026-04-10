@@ -177,10 +177,12 @@ func fetchVMDetails(name, uuid string) map[string]string {
 		}
 	}
 
-	ipOut, _ := runVBoxQuiet("guestproperty", "get", name, "/VirtualBox/GuestInfo/Net/0/V4/IP")
 	ip := ""
-	if strings.Contains(ipOut, "Value:") {
-		ip = strings.TrimSpace(strings.Split(ipOut, "Value:")[1])
+	if state == "corriendo" {
+		ipOut, _ := runVBoxQuiet("guestproperty", "get", name, "/VirtualBox/GuestInfo/Net/0/V4/IP")
+		if strings.Contains(ipOut, "Value:") {
+			ip = strings.TrimSpace(strings.Split(ipOut, "Value:")[1])
+		}
 	}
 
 	portOut, _ := runVBoxQuiet("guestproperty", "get", name, "/Gestor/Port")
