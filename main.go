@@ -600,7 +600,7 @@ func handleHAProxyStatus(w http.ResponseWriter, r *http.Request) {
 
 func handleHAProxyState(w http.ResponseWriter, r *http.Request) {
 	stateFile := "haproxy_state.json"
-	
+
 	if r.Method == "GET" {
 		data, err := os.ReadFile(stateFile)
 		if err != nil {
