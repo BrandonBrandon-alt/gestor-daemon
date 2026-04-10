@@ -6,7 +6,7 @@ Este proyecto permite transformar una máquina base en una plantilla lista para 
 
 ---
 
-## 🚀 Características Principales
+##  Características Principales
 
 ### 1. Gestión de Ciclo de Vida de VMs
 - **CRUD Completo:** Listado, creación, inicio (headless), apagado y eliminación total de instancias de VirtualBox.
@@ -29,7 +29,7 @@ Este proyecto permite transformar una máquina base en una plantilla lista para 
 
 ---
 
-## 🛠️ Stack Tecnológico
+##  Stack Tecnológico
 
 - **Backend:** [Go](https://go.dev/) (Golang)
     - Concurrencia nativa para escaneo de red y comandos VBox.
@@ -45,7 +45,7 @@ Este proyecto permite transformar una máquina base en una plantilla lista para 
 
 ---
 
-## 📋 Requisitos Previos
+##  Requisitos Previos
 
 1. **VirtualBox** instalado y la ruta de `VBoxManage.exe` configurada.
 2. **Llave SSH** configurada para acceso sin contraseña a las máquinas virtuales.
@@ -54,7 +54,7 @@ Este proyecto permite transformar una máquina base en una plantilla lista para 
 
 ---
 
-## ⚙️ Configuración
+##  Configuración
 
 El gestor puede configurarse mediante variables de entorno o editando las constantes en `main.go`:
 
@@ -67,7 +67,7 @@ El gestor puede configurarse mediante variables de entorno o editando las consta
 
 ---
 
-## 🏃 Modo de Uso
+##  Modo de Uso
 
 1. **Clonar y Ejecutar:**
    ```bash
@@ -84,7 +84,7 @@ El gestor puede configurarse mediante variables de entorno o editando las consta
 
 ---
 
-## 📂 Estructura del Proyecto
+##  Estructura del Proyecto
 
 ```text
 ├── main.go            # Lógica del servidor, API y orquestación SSH/VBox
@@ -96,9 +96,9 @@ El gestor puede configurarse mediante variables de entorno o editando las consta
 
 ---
 
-## 🛡️ Notas de Seguridad
+##  Notas de Seguridad
 - El proyecto utiliza `InsecureIgnoreHostKey()` para facilitar la gestión en redes locales dinámicas. En entornos productivos, se recomienda implementar verificación de huellas digitales SSH.
 - Se recomienda el uso de redes *Bridged* para que las VMs tengan visibilidad completa en la LAN.
 
 ---
-*Desarrollado con ❤️ para la simplificación de servidores y automatización de despliegues.*
+*Desarrollado con  para la simplificación de servidores y automatización de despliegues.*
