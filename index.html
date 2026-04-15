@@ -638,6 +638,9 @@
       <div class="nav-item" onclick="switchView('ops')">
         <span class="icon">hub</span> Operaciones de Red
       </div>
+      <div class="nav-item" onclick="switchView('autoscaling')">
+        <span class="icon">monitoring</span> Elasticidad Automática
+      </div>
     </nav>
   </aside>
 
@@ -965,10 +968,131 @@
               <button class="btn btn-blue btn-sm" onclick="serviceAction('install-stress')"><span
                   class="icon">download</span> Instalar stress-ng (Ubuntu/Debian)</button>
             </div>
+            <div style="width: 100%; margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid var(--border); display: flex; gap: 0.5rem;">
+              <input type="text" id="free-cmd" placeholder="Comando libre (ej. stress-ng --cpu 1 -l 90)" style="flex:1;">
+              <button class="btn btn-green btn-sm" onclick="freeCommand()"><span class="icon">terminal</span> Ejecutar</button>
+            </div>
           </div>
 
           <div class="output-console" id="service-output" style="min-height: 120px; display:block">// Listo para
             ejecutar comandos SSH...</div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ==========================================
+         VISTA 5: AUTOSCALING
+         ========================================== -->
+    <section id="view-autoscaling" class="view">
+      <div class="view-header">
+        <h2>Elasticidad Automática</h2>
+        <p>Orquestador para despliegue y destrucción dinámica por carga de red</p>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3><span>//</span> Parámetros de Auto-Escalado</h3>
+          <div class="form-group"
+            style="margin-bottom: 2rem; border-bottom: 1px solid var(--border); padding-bottom: 1rem;">
+            <label>Estado del Motor</label>
+            <div style="display:flex; gap: 1rem; align-items:center;">
+              <select id="as-enabled" style="width: auto;">
+                <option value="false">Desactivado</option>
+                <option value="true">Activado</option>
+              </select>
+              <span id="as-status-badge" class="status-badge status-unk"
+                style="min-width: 150px; justify-content: center;">Desconectado</span>
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div class="form-group">
+              <label>Umbral Superior (%)</label>
+              <input type="number" id="as-upper-threshold" value="80">
+            </div>
+            <div class="form-group">
+              <label>Tiempo (seg)</label>
+              <input type="number" id="as-upper-time" value="60">
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div class="form-group">
+              <label>Umbral Inferior (%)</label>
+              <input type="number" id="as-lower-threshold" value="20">
+            </div>
+            <div class="form-group">
+              <label>Tiempo (seg)</label>
+              <input type="number" id="as-lower-time" value="60">
+            </div>
+          </div>
+
+          <div class="form-group" style="margin-top: 1.5rem">
+            <label>Balanceador a Supervisar</label>
+            <select id="as-lb"></select>
+          </div>
+
+          <div class="form-group">
+            <label>Disco Base para Nodos (UUID)</label>
+            <select id="as-disk"></select>
+          </div>
+
+          <div class="form-group">
+            <label>Adaptador de Red</label>
+            <select class="network-adapter-select" id="as-network"></select>
+          </div>
+
+          <div class="form-group">
+            <label>Puerto Interno de la Aplicación</label>
+            <input type="number" id="as-port" value="8080">
+          </div>
+
+          <button class="btn btn-green" style="width: 100%; margin-top: 1rem;" onclick="saveAutoScalingConfig()"><span
+              class="icon">save</span> Guardar Configuración</button>
+        </div>
+
+        <div class="card">
+          <h3><span>//</span> Monitoreo en Tiempo Real</h3>
+          <div
+            style="font-size: 2.5rem; text-align:center; padding: 2rem 0; font-family: 'Space Mono', monospace; font-weight: bold;">
+            <span id="as-avg-cpu">0.0</span> <span
+              style="color:var(--text-muted); font-size:1.5rem; font-weight:normal">%</span>
+          </div>
+          <div style="text-align: center; color: var(--text-muted); margin-bottom: 2rem;">
+            Promedio general de CPU basado en <span id="as-active-nodes"
+              style="color:var(--text-main); font-weight:bold">0</span> nodos activos
+          </div>
+
+          <div
+            style="background: rgba(0,0,0,0.3); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">
+            <div style="display:flex; justify-content: space-between; margin-bottom:0.5rem">
+              <span style="font-size:0.8rem; color:var(--text-muted); font-family:'Space Mono',monospace">ALERTA ALTA
+                (Sobre <span id="as-lbl-upper">80</span>%)</span>
+              <span id="as-time-upper" style="font-size:0.8rem; font-family:'Space Mono',monospace">0s</span>
+            </div>
+            <div style="width: 100%; background: rgba(255,255,255,0.1); height: 6px; border-radius: 3px;">
+              <div id="as-bar-upper"
+                style="height: 100%; background: var(--accent2); border-radius: 3px; width: 0%; transition: width 1s;">
+              </div>
+            </div>
+          </div>
+
+          <div style="background: rgba(0,0,0,0.3); border: 1px solid var(--border); border-radius: 6px; padding: 1rem;">
+            <div style="display:flex; justify-content: space-between; margin-bottom:0.5rem">
+              <span style="font-size:0.8rem; color:var(--text-muted); font-family:'Space Mono',monospace">ALERTA BAJA
+                (Bajo <span id="as-lbl-lower">20</span>%)</span>
+              <span id="as-time-lower" style="font-size:0.8rem; font-family:'Space Mono',monospace">0s</span>
+            </div>
+            <div style="width: 100%; background: rgba(255,255,255,0.1); height: 6px; border-radius: 3px;">
+              <div id="as-bar-lower"
+                style="height: 100%; background: var(--accent3); border-radius: 3px; width: 0%; transition: width 1s;">
+              </div>
+            </div>
+          </div>
+
+          <h3 style="margin-top: 2rem;"><span>//</span> Registro de Eventos</h3>
+          <div id="as-logs" class="output-console" style="max-height: 200px; display:block">Cargando eventos...</div>
         </div>
       </div>
     </section>
@@ -1166,6 +1290,7 @@
       try {
         const res = await fetch('/api/disks');
         const disks = await res.json();
+        window.disksGlobal = disks;
         const tbody = document.getElementById('disks-table');
 
         if (!disks || disks.length === 0) {
@@ -1193,6 +1318,7 @@
             </td>
           </tr>`
         ).join('');
+        populateASSelects();
       } catch (e) { console.error("Error discos", e); }
     }
 
@@ -1416,6 +1542,28 @@
       } catch (e) { out.textContent += '\n[ERROR] ' + e.message; }
     }
 
+    async function freeCommand() {
+      const ip = document.getElementById('service-ip').value.trim();
+      const cmd = document.getElementById('free-cmd').value.trim();
+      const out = document.getElementById('service-output');
+
+      if (!ip) return showToast("Aviso", "Ingresa la IP del nodo destino", "error");
+      if (!cmd) return showToast("Aviso", "Ingresa un comando", "error");
+
+      out.textContent = `[${ip}] ssh > ${cmd}\n`;
+      try {
+        const res = await fetch('/api/service', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ip: ip, action: 'exec', service: cmd })
+        });
+        const data = await res.json();
+        out.textContent += data.output || data.message || '(sin salida)';
+      } catch (err) {
+        out.textContent += "\nError de red: " + err.message;
+      }
+    }
+
     function addLB() {
       const name = document.getElementById('lb-name').value.trim();
       const ip = document.getElementById('lb-ip').value.trim();
@@ -1614,11 +1762,125 @@
       } catch (e) { out.textContent += '\nError: ' + e.message; showToast("Error", e.message, "error"); }
     }
 
+    // ================= AUTO-SCALING =================
+    let asStatusInterval = null;
+
+    async function fetchAutoScalingConfig() {
+      try {
+        const res = await fetch('/api/autoscaling/config');
+        if (res.ok) {
+          const cfg = await res.json();
+          document.getElementById('as-enabled').value = cfg.enabled ? "true" : "false";
+          document.getElementById('as-upper-threshold').value = cfg.upperThreshold || 80;
+          document.getElementById('as-upper-time').value = cfg.upperTime || 60;
+          document.getElementById('as-lower-threshold').value = cfg.lowerThreshold || 20;
+          document.getElementById('as-lower-time').value = cfg.lowerTime || 60;
+          document.getElementById('as-port').value = cfg.appPort || 8080;
+
+          if (cfg.lbIp) document.getElementById('as-lb').value = cfg.lbIp;
+          if (cfg.diskUuid) document.getElementById('as-disk').value = cfg.diskUuid;
+          if (cfg.networkAdapter) document.getElementById('as-network').value = cfg.networkAdapter;
+        }
+      } catch (e) { console.error(e); }
+    }
+
+    async function saveAutoScalingConfig() {
+      const cfg = {
+        enabled: document.getElementById('as-enabled').value === "true",
+        upperThreshold: parseInt(document.getElementById('as-upper-threshold').value),
+        upperTime: parseInt(document.getElementById('as-upper-time').value),
+        lowerThreshold: parseInt(document.getElementById('as-lower-threshold').value),
+        lowerTime: parseInt(document.getElementById('as-lower-time').value),
+        lbIp: document.getElementById('as-lb').value,
+        diskUuid: document.getElementById('as-disk').value,
+        networkAdapter: document.getElementById('as-network').value,
+        appPort: document.getElementById('as-port').value,
+        maxNodes: 5,
+        minNodes: 1
+      };
+
+      try {
+        const res = await fetch('/api/autoscaling/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(cfg)
+        });
+        if (res.ok) {
+          showToast("Guardado", "Configuración de Elasticidad guardada correctamente.", "success");
+        } else {
+          showToast("Error", "Error al guardar el Engine", "error");
+        }
+      } catch (e) {
+        showToast("Error", "No se pudo conectar al servidor", "error");
+      }
+    }
+
+    function populateASSelects() {
+      // Disks
+      const diskHtml = window.disksGlobal.filter(d => d.name.endsWith('.vdi') || d.name.endsWith('.vmdk'))
+        .map(d => `<option value="${d.uuid}">${d.name}</option>`).join('');
+      const asDisk = document.getElementById('as-disk');
+      if (asDisk) asDisk.innerHTML = diskHtml || '<option value="">Sin discos</option>';
+
+      // HAProxy LBs
+      const lbHtml = lbs.map(lb => `<option value="${lb.ip}">${lb.name} (${lb.ip})</option>`).join('');
+      const asLb = document.getElementById('as-lb');
+      if (asLb) asLb.innerHTML = lbHtml || '<option value="">Sin balanceadores</option>';
+    }
+
+    async function fetchAutoScalingStatus() {
+      try {
+        const res = await fetch('/api/autoscaling/status');
+        if (!res.ok) return;
+        const state = await res.json();
+
+        // General text
+        document.getElementById('as-avg-cpu').textContent = state.cpuAvg.toFixed(1);
+        document.getElementById('as-active-nodes').textContent = state.activeNodes;
+
+        const badge = document.getElementById('as-status-badge');
+        if (!state.config.enabled) {
+          badge.className = 'status-badge status-unk';
+          badge.innerHTML = '<span class="status-led"></span> Desconectado';
+        } else {
+          badge.innerHTML = `<span class="status-led ${state.isScaling ? 'led-warn' : 'led-up'}"></span> ` + state.status;
+          badge.className = state.isScaling ? 'status-badge status-warn' : 'status-badge status-up';
+        }
+
+        // Bars and Timers
+        document.getElementById('as-lbl-upper').textContent = state.config.upperThreshold;
+        document.getElementById('as-lbl-lower').textContent = state.config.lowerThreshold;
+
+        document.getElementById('as-time-upper').textContent = state.timeAboveUpper + 's / ' + state.config.upperTime + 's';
+        document.getElementById('as-time-lower').textContent = state.timeBelowLower + 's / ' + state.config.lowerTime + 's';
+
+        const pctUpper = Math.min(100, (state.timeAboveUpper / state.config.upperTime) * 100);
+        const pctLower = Math.min(100, (state.timeBelowLower / state.config.lowerTime) * 100);
+
+        document.getElementById('as-bar-upper').style.width = pctUpper + '%';
+        document.getElementById('as-bar-lower').style.width = pctLower + '%';
+
+        // Logs
+        const logsDiv = document.getElementById('as-logs');
+        if (state.eventLogs && state.eventLogs.length > 0) {
+          logsDiv.innerHTML = state.eventLogs.join('<br>');
+          logsDiv.scrollTop = logsDiv.scrollHeight;
+        } else {
+          logsDiv.innerHTML = '// Monitoreo silencioso...';
+        }
+
+      } catch (e) { console.error("AutoScaling loop error", e); }
+    }
+
+
     // ================= INIT =================
     loadDisks();
     loadVMs();
     loadNetworkAdapters();
-    fetchState();
+    fetchState().then(() => {
+      fetchAutoScalingConfig();
+      asStatusInterval = setInterval(fetchAutoScalingStatus, 5000);
+    });
   </script>
 </body>
 

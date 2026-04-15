@@ -701,6 +701,8 @@ func handleService(w http.ResponseWriter, r *http.Request) {
 		cmd = fmt.Sprintf("sudo journalctl -u %s --no-pager -n 50", body.Service)
 	case "install-stress":
 		cmd = "sudo apt-get update && sudo apt-get install -y stress-ng"
+	case "exec":
+		cmd = body.Service // In 'exec' mode, the 'Service' field will carry the raw command
 	default:
 		jsonError(w, "Acción inválida: "+body.Action)
 		return
@@ -980,9 +982,12 @@ func main() {
 	http.HandleFunc("/api/haproxy/status", handleHAProxyStatus)
 	http.HandleFunc("/api/haproxy/state", handleHAProxyState)
 	http.HandleFunc("/api/network/adapters", handleListNetworkAdapters)
+	http.HandleFunc("/api/autoscaling/config", handleAutoScalingConfig)
+	http.HandleFunc("/api/autoscaling/status", handleAutoScalingStatus)
 
 	fmt.Println("Gestor de demonios corriendo en http://localhost:8090")
 	go displayVMStatusTable()
+	go StartAutoscaler()
 	log.Fatal(http.ListenAndServe(":8090", nil))
 }
 
