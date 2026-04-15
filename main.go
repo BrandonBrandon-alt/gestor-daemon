@@ -23,7 +23,7 @@ import (
 // ─── Configuración ───────────────────────────────────────────────────────────
 
 var (
-	sshUser       = getEnvOrDefault("SSH_USER", "servidor1")
+	sshUser       = getEnvOrDefault("SSH_USER", "servidor")
 	sshKeyPath    = getEnvOrDefault("SSH_KEY_PATH", `C:\Users\sneid\.ssh\id_rsa`)
 	vboxManage    = getEnvOrDefault("VBOX_MANAGE", `C:\Program Files\Oracle\VirtualBox\VBoxManage.exe`)
 	bridgeAdapter = getEnvOrDefault("BRIDGE_ADAPTER", "Intel(R) Wi-Fi 6 AX201 160MHz")
@@ -48,8 +48,11 @@ func buildSSHConfig() (*ssh.ClientConfig, error) {
 		return nil, fmt.Errorf("llave SSH inválida: %v", err)
 	}
 	return &ssh.ClientConfig{
-		User:            sshUser,
-		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		User: sshUser,
+		Auth: []ssh.AuthMethod{
+			ssh.PublicKeys(signer),
+			ssh.Password(sshUser), // Fallback: intenta usar el mismo nombre de usuario como contraseña (ej. servidor1/servidor1)
+		},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         10 * time.Second,
 	}, nil
@@ -154,6 +157,24 @@ func getVMIP(vmName string) (string, error) {
 func runVBoxQuiet(args ...string) (string, error) {
 	out, err := exec.Command(vboxManage, args...).CombinedOutput()
 	return string(out), err
+}
+
+func listNetworkAdapters() ([]string, error) {
+	out, err := runVBoxQuiet("list", "bridgedifs")
+	if err != nil {
+		return nil, err
+	}
+	var adapters []string
+	lines := strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "Name:") {
+			name := strings.TrimSpace(strings.TrimPrefix(line, "Name:"))
+			if name != "" {
+				adapters = append(adapters, name)
+			}
+		}
+	}
+	return adapters, nil
 }
 
 func fetchVMDetails(name, uuid string) map[string]string {
@@ -346,9 +367,10 @@ func handleListDisks(w http.ResponseWriter, r *http.Request) {
 
 func handleCreateVM(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		VMName   string `json:"vmName"`
-		DiskUUID string `json:"diskUUID"`
-		Port     string `json:"port"`
+		VMName        string `json:"vmName"`
+		DiskUUID      string `json:"diskUUID"`
+		Port          string `json:"port"`
+		BridgeAdapter string `json:"bridgeAdapter"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, "JSON inválido: "+err.Error())
@@ -359,12 +381,17 @@ func handleCreateVM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	adapter := body.BridgeAdapter
+	if adapter == "" {
+		adapter = bridgeAdapter
+	}
+
 	if _, err := runVBox("createvm", "--name", body.VMName, "--ostype", "Debian_64", "--register"); err != nil {
 		jsonError(w, "Error creando VM: "+err.Error())
 		return
 	}
 
-	runVBox("modifyvm", body.VMName, "--memory", "512", "--nic1", "bridged", "--bridgeadapter1", bridgeAdapter)
+	runVBox("modifyvm", body.VMName, "--memory", "512", "--nic1", "bridged", "--bridgeadapter1", adapter)
 	runVBox("storagectl", body.VMName, "--name", "SATA", "--add", "sata")
 
 	if _, err := runVBox("storageattach", body.VMName,
@@ -672,6 +699,8 @@ func handleService(w http.ResponseWriter, r *http.Request) {
 		cmd = fmt.Sprintf("sudo systemctl %s %s", body.Action, body.Service)
 	case "logs":
 		cmd = fmt.Sprintf("sudo journalctl -u %s --no-pager -n 50", body.Service)
+	case "install-stress":
+		cmd = "sudo apt-get update && sudo apt-get install -y stress-ng"
 	default:
 		jsonError(w, "Acción inválida: "+body.Action)
 		return
@@ -904,6 +933,15 @@ func handleDeleteDisk(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, Response{Success: true, Message: "Disco eliminado correctamente"})
 }
 
+func handleListNetworkAdapters(w http.ResponseWriter, r *http.Request) {
+	adapters, err := listNetworkAdapters()
+	if err != nil {
+		jsonError(w, "Error listando adaptadores: "+err.Error())
+		return
+	}
+	jsonOK(w, adapters)
+}
+
 // ─── Helpers JSON ─────────────────────────────────────────────────────────────
 
 func jsonOK(w http.ResponseWriter, data interface{}) {
@@ -941,6 +979,7 @@ func main() {
 	http.HandleFunc("/api/haproxy/apply", handleApplyHAProxy)
 	http.HandleFunc("/api/haproxy/status", handleHAProxyStatus)
 	http.HandleFunc("/api/haproxy/state", handleHAProxyState)
+	http.HandleFunc("/api/network/adapters", handleListNetworkAdapters)
 
 	fmt.Println("Gestor de demonios corriendo en http://localhost:8090")
 	go displayVMStatusTable()
