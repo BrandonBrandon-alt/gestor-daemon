@@ -5,7 +5,7 @@
   "lowerThreshold": 20,
   "lowerTime": 60,
   "lbIp": "192.168.1.56",
-  "diskUuid": "55675f68-40ee-4c73-afe3-3b2ab01ffb25",
+  "diskUuid": "9fa70c6b-18c0-4998-8228-62edbe58bbad",
   "networkAdapter": "Intel(R) Wi-Fi 6 AX201 160MHz",
   "appPort": "8081",
   "maxNodes": 5,

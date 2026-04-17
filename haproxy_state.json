@@ -1,1 +1,1 @@
-{"lbs":[{"ip":"192.168.1.56","name":"balanceador"},{"ip":"192.168.1.123","name":"servidorBalanceador2"}],"asignaciones":{"192.168.1.123":[],"192.168.1.56":[{"ip":"192.168.1.101","lastStatus":"WAIT","name":"servidorImagenes1","port":"8081"}]}}
+{"lbs":[{"ip":"192.168.1.56","name":"balanceador"}],"asignaciones":{"192.168.1.56":[{"ip":"192.168.1.137","lastStatus":"WAIT","name":"servidorImagenes4","port":"8081"}]}}

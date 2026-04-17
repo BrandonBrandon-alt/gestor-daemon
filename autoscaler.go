@@ -65,7 +65,7 @@ func logEvent(msg string) {
 	if len(asState.EventLogs) > 20 { // Mantener solo 20 logs recientes
 		asState.EventLogs = asState.EventLogs[1:]
 	}
-	fmt.Println("AutoScaler:", msg)
+
 }
 
 func getHAProxyStateUnsafe() (map[string]interface{}, map[string][]map[string]string) {
@@ -151,15 +151,15 @@ func StartAutoscaler() {
 				if err == nil {
 					val, errParse := strconv.ParseFloat(strings.TrimSpace(out), 64)
 					if errParse == nil {
-						fmt.Printf("[AutoScaler] Nodo %s (%s) -> CPU: %.1f%%\n", nodeName, nodeIP, val)
+
 						mu.Lock()
 						totalCpu += val
 						mu.Unlock()
 					} else {
-						fmt.Printf("[AutoScaler] Error parseando CPU de %s: %v (Out: %s)\n", nodeIP, errParse, out)
+
 					}
 				} else {
-					fmt.Printf("[AutoScaler] Error SSH en nodo %s: %v\n", nodeIP, err)
+
 				}
 			}(ip, name)
 		}
