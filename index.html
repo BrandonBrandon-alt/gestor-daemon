@@ -626,7 +626,10 @@
     </div>
 
     <nav>
-      <div class="nav-item active" onclick="switchView('dashboard')">
+      <div class="nav-item active" onclick="switchView('httpaas')">
+        <span class="icon">cloud</span> Plataforma HTTPaaS
+      </div>
+      <div class="nav-item" onclick="switchView('dashboard')">
         <span class="icon">monitor_heart</span> Monitor de Estado
       </div>
       <div class="nav-item" onclick="switchView('catalog')">
@@ -663,9 +666,60 @@
     </div>
 
     <!-- ==========================================
+         VISTA HTTPaaS (NUEVA)
+         ========================================== -->
+    <section id="view-httpaas" class="view active">
+      <div class="view-header">
+        <h2>Plataforma HTTP as a Service</h2>
+        <p>Aprovisionamiento automático de servidores Apache en cloud.local</p>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h3><span>//</span> Solicitar Nueva Instancia</h3>
+          <form id="provision-form" onsubmit="provisionarInstancia(event)">
+            <div class="form-group">
+              <label>Nombre del Sitio (ej. miprojeto)</label>
+              <input type="text" id="site-name" required pattern="[a-zA-Z0-9-]+" title="Solo letras, números y guiones">
+            </div>
+            <div class="form-group">
+              <label>Archivo Web (.zip)</label>
+              <input type="file" id="site-zip" accept=".zip" required>
+            </div>
+            <button type="submit" class="btn btn-green" style="width: 100%; margin-top: 1rem;">
+              <span class="icon">cloud_upload</span> Desplegar Sitio
+            </button>
+          </form>
+          <div id="provision-console" class="output-console" style="display:none; margin-top:1rem;"></div>
+        </div>
+
+        <div class="card">
+          <h3><span>//</span> Instancias Activas</h3>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>NOMBRE</th>
+                  <th>IP</th>
+                  <th>URL</th>
+                  <th>ACCIONES</th>
+                </tr>
+              </thead>
+              <tbody id="httpaas-table">
+                <tr>
+                  <td colspan="4" style="color:var(--text-muted);text-align:center;padding:2rem;">Cargando instancias...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==========================================
          VISTA 1: DASHBOARD
          ========================================== -->
-    <section id="view-dashboard" class="view active">
+    <section id="view-dashboard" class="view">
       <div class="view-header">
         <h2>Monitor de Estado Global</h2>
         <p>Resumen en tiempo real de nodos, balanceadores y máquinas crudas</p>
@@ -1873,13 +1927,99 @@
     }
 
 
+    // ================= HTTPaaS =================
+    async function loadHTTPaaS() {
+      try {
+        const res = await fetch('/api/instances');
+        if (!res.ok) throw new Error('Error al cargar instancias');
+        const insts = await res.json();
+        const tbody = document.getElementById('httpaas-table');
+        if (!insts || insts.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text-muted);text-align:center;padding:2rem;">Sin instancias activas</td></tr>';
+          return;
+        }
+        tbody.innerHTML = insts.map(i => `
+          <tr>
+            <td class="mono">${i.name}</td>
+            <td class="mono">${i.ip}</td>
+            <td><a href="${i.url}" target="_blank" style="color:var(--accent)">${i.url}</a></td>
+            <td>
+              <button class="btn btn-red btn-sm" onclick="deleteInstance('${i.name}')"><span class="icon">delete</span> Eliminar</button>
+            </td>
+          </tr>
+        `).join('');
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function provisionarInstancia(e) {
+      e.preventDefault();
+      const form = e.target;
+      const btn = form.querySelector('button');
+      const out = document.getElementById('provision-console');
+      const name = document.getElementById('site-name').value;
+      const file = document.getElementById('site-zip').files[0];
+
+      if (!file) return showToast("Error", "Debes seleccionar un archivo .zip", "error");
+
+      const fd = new FormData();
+      fd.append('nombre', name);
+      fd.append('zip', file);
+
+      btn.disabled = true;
+      btn.innerHTML = '<span class="icon">sync</span> Desplegando... (tomará ~1 min)';
+      out.style.display = 'block';
+      out.textContent = `[HTTPaaS] Iniciando aprovisionamiento para '${name}'...\n`;
+
+      try {
+        const res = await fetch('/api/provision', { method: 'POST', body: fd });
+        const data = await res.json();
+        
+        if (res.ok) {
+          out.textContent += `[Exito] Instancia desplegada en ${data.ip}\nURL: ${data.url}\n`;
+          showToast("Aprovisionado", `El sitio ${name} está listo.`, "success");
+          form.reset();
+          loadHTTPaaS();
+        } else {
+          out.textContent += `[Error] ${data.message}\n`;
+          showToast("Fallo", data.message, "error");
+        }
+      } catch (err) {
+        out.textContent += `[Error Local] ${err.message}\n`;
+        showToast("Fallo", "Error de red al aprovisionar", "error");
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<span class="icon">cloud_upload</span> Desplegar Sitio';
+      }
+    }
+
+    async function deleteInstance(name) {
+      if (!confirm(`¿Seguro que deseas eliminar el sitio '${name}'? Esto destruirá la VM y el registro DNS.`)) return;
+      showToast("Eliminando", `Destruyendo instancia ${name}...`, "info");
+      try {
+        const res = await fetch('/api/instances/' + name, { method: 'DELETE' });
+        const data = await res.json();
+        if (res.ok) {
+          showToast("Eliminada", `La instancia ${name} fue destruida.`, "success");
+          loadHTTPaaS();
+        } else {
+          showToast("Error", data.message, "error");
+        }
+      } catch (e) {
+        showToast("Error", e.message, "error");
+      }
+    }
+
     // ================= INIT =================
     loadDisks();
     loadVMs();
+    loadHTTPaaS();
     loadNetworkAdapters();
     fetchState().then(() => {
       fetchAutoScalingConfig();
       asStatusInterval = setInterval(fetchAutoScalingStatus, 5000);
+      setInterval(loadHTTPaaS, 30000); // Auto refresh cada 30s
     });
   </script>
 </body>

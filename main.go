@@ -23,10 +23,14 @@ import (
 // ─── Configuración ───────────────────────────────────────────────────────────
 
 var (
-	sshUser       = getEnvOrDefault("SSH_USER", "servidor")
-	sshKeyPath    = getEnvOrDefault("SSH_KEY_PATH", `C:\Users\sneid\.ssh\id_rsa`)
-	vboxManage    = getEnvOrDefault("VBOX_MANAGE", `C:\Program Files\Oracle\VirtualBox\VBoxManage.exe`)
-	bridgeAdapter = getEnvOrDefault("BRIDGE_ADAPTER", "Intel(R) Wi-Fi 6 AX201 160MHz")
+	sshUser       = getEnvOrDefault("SSH_USER", "vagrant")
+	sshKeyPath    = getEnvOrDefault("SSH_KEY_PATH", "/home/yep/.vagrant.d/insecure_private_key") // Llave insegura de Vagrant
+	vboxManage    = getEnvOrDefault("VBOX_MANAGE", "VBoxManage")
+	bridgeAdapter = getEnvOrDefault("BRIDGE_ADAPTER", "eth0")
+
+	// Configuración para ejecutar VBoxManage remotamente en el HOST desde la VM
+	vboxHostIP   = getEnvOrDefault("VBOX_HOST_IP", "") // Si está vacío, ejecuta VBoxManage localmente
+	vboxHostUser = getEnvOrDefault("VBOX_HOST_USER", "usuario_host")
 )
 
 func getEnvOrDefault(key, defaultVal string) string {
@@ -39,20 +43,20 @@ func getEnvOrDefault(key, defaultVal string) string {
 // ─── SSH Config centralizada ─────────────────────────────────────────────────
 
 func buildSSHConfig() (*ssh.ClientConfig, error) {
-	key, err := os.ReadFile(sshKeyPath)
-	if err != nil {
-		return nil, fmt.Errorf("no se pudo leer la llave SSH: %v", err)
+	authMethods := []ssh.AuthMethod{
+		ssh.Password(sshUser), // Fallback: intenta usar el mismo nombre de usuario como contraseña
 	}
-	signer, err := ssh.ParsePrivateKey(key)
-	if err != nil {
-		return nil, fmt.Errorf("llave SSH inválida: %v", err)
+
+	// Solo intentamos agregar la llave si el archivo existe
+	if key, err := os.ReadFile(sshKeyPath); err == nil {
+		if signer, err := ssh.ParsePrivateKey(key); err == nil {
+			authMethods = append([]ssh.AuthMethod{ssh.PublicKeys(signer)}, authMethods...)
+		}
 	}
+
 	return &ssh.ClientConfig{
-		User: sshUser,
-		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(signer),
-			ssh.Password(sshUser), // Fallback: intenta usar el mismo nombre de usuario como contraseña (ej. servidor1/servidor1)
-		},
+		User:            sshUser,
+		Auth:            authMethods,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         10 * time.Second,
 	}, nil
@@ -123,10 +127,48 @@ func createRemoteFile(ip, remotePath, content string) error {
 	return err
 }
 
-// ─── VBoxManage ──────────────────────────────────────────────────────────────
+// ─── VBoxManage (Soporta ejecución remota en Host) ───────────────────────────
 
 func runVBox(args ...string) (string, error) {
 	fmt.Printf("VBox: %s\n", strings.Join(args, " "))
+	
+	if vboxHostIP != "" {
+		// Ejecutar vía SSH en el host físico
+		cmd := fmt.Sprintf("%s %s", vboxManage, strings.Join(args, " "))
+		
+		// Crear config SSH temporal para el host
+		key, err := os.ReadFile(sshKeyPath)
+		if err != nil {
+			return "", fmt.Errorf("no se pudo leer llave SSH del host: %v", err)
+		}
+		signer, _ := ssh.ParsePrivateKey(key)
+		config := &ssh.ClientConfig{
+			User: vboxHostUser,
+			Auth: []ssh.AuthMethod{ssh.PublicKeys(signer), ssh.Password(vboxHostUser)},
+			HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+			Timeout: 10 * time.Second,
+		}
+		
+		client, err := ssh.Dial("tcp", vboxHostIP+":22", config)
+		if err != nil {
+			return "", fmt.Errorf("error conectando al host: %v", err)
+		}
+		defer client.Close()
+		
+		session, err := client.NewSession()
+		if err != nil {
+			return "", err
+		}
+		defer session.Close()
+		
+		out, err := session.CombinedOutput(cmd)
+		if err != nil {
+			fmt.Printf("Error: %v | %s\n", err, string(out))
+		}
+		return string(out), err
+	}
+
+	// Ejecución local (Si se corre desde el host directamente)
 	out, err := exec.Command(vboxManage, args...).CombinedOutput()
 	if err != nil {
 		fmt.Printf("Error: %v | %s\n", err, string(out))
@@ -155,6 +197,31 @@ func getVMIP(vmName string) (string, error) {
 }
 
 func runVBoxQuiet(args ...string) (string, error) {
+	if vboxHostIP != "" {
+		cmd := fmt.Sprintf("%s %s", vboxManage, strings.Join(args, " "))
+		
+		key, err := os.ReadFile(sshKeyPath)
+		if err != nil { return "", err }
+		signer, _ := ssh.ParsePrivateKey(key)
+		config := &ssh.ClientConfig{
+			User: vboxHostUser,
+			Auth: []ssh.AuthMethod{ssh.PublicKeys(signer), ssh.Password(vboxHostUser)},
+			HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+			Timeout: 10 * time.Second,
+		}
+		
+		client, err := ssh.Dial("tcp", vboxHostIP+":22", config)
+		if err != nil { return "", err }
+		defer client.Close()
+		
+		session, err := client.NewSession()
+		if err != nil { return "", err }
+		defer session.Close()
+		
+		out, err := session.CombinedOutput(cmd)
+		return string(out), err
+	}
+
 	out, err := exec.Command(vboxManage, args...).CombinedOutput()
 	return string(out), err
 }
@@ -984,6 +1051,11 @@ func main() {
 	http.HandleFunc("/api/network/adapters", handleListNetworkAdapters)
 	http.HandleFunc("/api/autoscaling/config", handleAutoScalingConfig)
 	http.HandleFunc("/api/autoscaling/status", handleAutoScalingStatus)
+	
+	// Nuevos Endpoints HTTPaaS
+	http.HandleFunc("/api/provision", handleProvision)
+	http.HandleFunc("/api/instances", handleInstances)
+	http.HandleFunc("/api/instances/", handleDeleteInstance)
 
 	fmt.Println("Gestor de demonios corriendo en http://localhost:8090")
 	go displayVMStatusTable()
