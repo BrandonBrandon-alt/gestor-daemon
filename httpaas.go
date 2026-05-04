@@ -109,24 +109,38 @@ return filepath.Join(home, "VirtualBox VMs")
 // Falls back to searching through the global HDD list if initial method fails.
 // The template disk must be attached to "plantilla_http_base" VM.
 // Returns the disk UUID string or an error if the disk cannot be located.
+// getPlantillaDiskUUID retrieves the UUID of the base template disk for cloning.
+// It parses showvminfo output to find the first attached storage medium (.vdi or .vmdk).
+// Returns the disk UUID string or an error if the disk cannot be located.
 func getPlantillaDiskUUID() (string, error) {
-out, _ := runVBoxQuiet("showvminfo", "plantilla_http_base", "--machinereadable")
-lines := strings.Split(out, "\n")
-for _, line := range lines {
-if strings.HasPrefix(line, "\"SATA-0-0\"=") {
-return strings.Trim(strings.Split(line, "=")[1], "\""), nil
-}
-}
-// Fallback: search through all HDDs for template reference
-out, _ = runVBoxQuiet("list", "hdds")
-hdds := strings.Split(out, "UUID:")
-for _, hdd := range hdds {
-if strings.Contains(hdd, "plantilla_http_base") {
-lines := strings.Split(hdd, "\n")
-return strings.TrimSpace(lines[0]), nil
-}
-}
-return "", fmt.Errorf("no se pudo encontrar el disco de la plantilla")
+	out, _ := runVBoxQuiet("showvminfo", "plantilla_http_base", "--machinereadable")
+	lines := strings.Split(out, "\n")
+	for _, line := range lines {
+		lineLower := strings.ToLower(line)
+		// Look for lines containing disk images (.vdi or .vmdk)
+		if (strings.Contains(lineLower, ".vdi") || strings.Contains(lineLower, ".vmdk")) && strings.Contains(line, "-ImageUUID-") {
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) == 2 {
+				return strings.Trim(parts[1], "\"\r\n "), nil
+			}
+		}
+	}
+
+	// Fallback: search through all HDDs for template reference
+	out, _ = runVBoxQuiet("list", "hdds")
+	// Split by double newline to separate HDD blocks
+	blocks := strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n\n")
+	for _, block := range blocks {
+		if strings.Contains(block, "plantilla_http_base") {
+			lines := strings.Split(block, "\n")
+			for _, l := range lines {
+				if strings.HasPrefix(l, "UUID:") && !strings.Contains(l, "Parent UUID:") {
+					return strings.TrimSpace(strings.TrimPrefix(l, "UUID:")), nil
+				}
+			}
+		}
+	}
+	return "", fmt.Errorf("no se pudo encontrar el disco de la plantilla (asegúrate de que 'plantilla_http_base' existe y tiene un disco)")
 }
 
 // getNextFreeIP allocates the next available IP address from the instance pool.
@@ -214,43 +228,43 @@ jsonError(w, err.Error())
 return
 }
 
-// 4. Clone the template disk for this instance
+// 4. Preparar carpeta de la VM (para logs y config)
 vmName := "web-" + nombre
 vboxFolder := getVBoxDefaultFolder()
 vmFolder := filepath.Join(vboxFolder, vmName)
-cloneDiskPath := filepath.Join(vmFolder, vmName+".vdi")
-
 os.MkdirAll(vmFolder, 0755)
 
-fmt.Printf("Clonando disco para %s...\n", vmName)
-_, err = runVBox("clonemedium", plantillaDiskUUID, cloneDiskPath, "--format", "VDI")
-if err != nil {
-jsonError(w, "Error clonando disco: "+err.Error())
-return
-}
-
-// 5. Calculate unique SSH port (base 2300 + offset from last IP octet)
+// 5. Calcular puerto SSH único (base 2300 + offset del último octeto de la IP)
 ipParts := strings.Split(nuevaIP, ".")
 ipOffset := 0
 fmt.Sscanf(ipParts[3], "%d", &ipOffset)
 sshPort := fmt.Sprintf("%d", 2300+ipOffset)
 
-// 6. Create VM with dual networking
+// 6. Crear VM con red dual
+fmt.Printf("Creando VM %s usando disco base (multiattach)...\n", vmName)
 _, err = runVBox("createvm", "--name", vmName, "--ostype", "Debian_64", "--register")
 if err != nil {
-jsonError(w, "Error creando VM: "+err.Error())
-return
+	jsonError(w, "Error creando VM: "+err.Error())
+	return
 }
 
-// NIC1: NAT with SSH port forwarding (for initial boot connectivity)
-// NIC2: Host-only network vboxnet0 (for final static IP configuration)
+// NIC1: NAT con reenvío de puerto SSH (para configuración inicial)
+// NIC2: Red interna vboxnet0 (para la IP estática final)
 runVBox("modifyvm", vmName, "--memory", "512",
-"--nic1", "nat",
-"--natpf1", fmt.Sprintf("ssh,tcp,127.0.0.1,%s,,22", sshPort),
-"--nic2", "hostonly", "--hostonlyadapter2", "vboxnet0")
+	"--nic1", "nat",
+	"--natpf1", fmt.Sprintf("ssh,tcp,127.0.0.1,%s,,22", sshPort),
+	"--nic2", "hostonly", "--hostonlyadapter2", "vboxnet0")
+
 runVBox("storagectl", vmName, "--name", "SATA", "--add", "sata")
-runVBox("storageattach", vmName, "--storagectl", "SATA", "--port", "0", "--device", "0",
-"--type", "hdd", "--medium", cloneDiskPath)
+
+// Adjuntar el disco de la plantilla directamente en modo multiattach
+// Esto crea automáticamente un disco de diferenciación para la nueva VM
+_, err = runVBox("storageattach", vmName, "--storagectl", "SATA", "--port", "0", "--device", "0",
+	"--type", "hdd", "--medium", plantillaDiskUUID, "--mtype", "multiattach")
+if err != nil {
+	jsonError(w, "Error al adjuntar disco base: "+err.Error())
+	return
+}
 
 // 7. Boot the VM
 runVBox("startvm", vmName, "--type", "headless")
@@ -355,13 +369,14 @@ jsonError(w, "Instancia no encontrada")
 return
 }
 
-vmName := "web-" + nombre
-runVBox("controlvm", vmName, "poweroff")
-time.Sleep(3 * time.Second)
-runVBox("unregistervm", vmName, "--delete-all")
+	vmName := "web-" + nombre
+	// Usar runVBoxQuiet para no llenar el log si la máquina no existe
+	runVBoxQuiet("controlvm", vmName, "poweroff")
+	time.Sleep(2 * time.Second)
+	runVBoxQuiet("unregistervm", vmName, "--delete-all")
 
-deregisterDNS(nombre)
-saveInstances(newInsts)
+	deregisterDNS(nombre)
+	saveInstances(newInsts)
 
 jsonOK(w, Response{Success: true, Message: "Instancia eliminada"})
 }

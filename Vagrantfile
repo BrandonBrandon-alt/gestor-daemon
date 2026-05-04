@@ -120,6 +120,31 @@ EOF
 
       echo ">>> [plantilla] Listo."
     SHELL
+
+    # Automatizar la conversión del disco a MULTIATTACH para permitir clonación en caliente
+    pl.trigger.after :up do |trigger|
+      trigger.info = "Convirtiendo disco de plantilla a MULTIATTACH..."
+      trigger.run = { inline: <<-'BASH'
+        VM_NAME="plantilla_http_base"
+        # 1. Obtener el UUID del disco
+        DISK_UUID=$(VBoxManage showvminfo "$VM_NAME" --machinereadable | grep "SATA Controller-ImageUUID-0-0" | cut -d'=' -f2 | tr -d '"')
+        if [ -z "$DISK_UUID" ]; then
+          echo "No se pudo encontrar el UUID del disco."
+          exit 0
+        fi
+        # 2. Apagar brevemente para cambiar el tipo (solo si es necesario)
+        VBoxManage controlvm "$VM_NAME" poweroff 2>/dev/null || true
+        sleep 2
+        # 3. Desvincular, cambiar tipo y volver a vincular
+        VBoxManage storageattach "$VM_NAME" --storagectl "SATA Controller" --port 0 --device 0 --medium none
+        VBoxManage modifymedium disk "$DISK_UUID" --type multiattach
+        VBoxManage storageattach "$VM_NAME" --storagectl "SATA Controller" --port 0 --device 0 --type hdd --medium "$DISK_UUID"
+        # 4. Volver a encender
+        VBoxManage startvm "$VM_NAME" --type headless
+        echo ">>> Disco de plantilla configurado como MULTIATTACH correctamente."
+      BASH
+      }
+    end
   end
 
   # =================================================================
