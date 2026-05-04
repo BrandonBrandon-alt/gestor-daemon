@@ -162,7 +162,7 @@ EOF
       chmod +x /etc/profile.d/golang.sh
       export PATH=$PATH:/usr/local/go/bin
       echo ">>> [gestion] Go instalado: $(go version)"
-
+    
       echo ">>> [gestion] Configurando DNS interno (al final para no romper wget)..."
       printf 'nameserver 192.168.10.10\nsearch cloud.local\n' > /etc/resolv.conf
 
