@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -23,15 +25,34 @@ import (
 // ─── Configuración ───────────────────────────────────────────────────────────
 
 var (
-	sshUser       = getEnvOrDefault("SSH_USER", "vagrant")
-	sshKeyPath    = getEnvOrDefault("SSH_KEY_PATH", "/home/yep/.vagrant.d/insecure_private_key") // Llave insegura de Vagrant
-	vboxManage    = getEnvOrDefault("VBOX_MANAGE", "VBoxManage")
+	sshUser    = getEnvOrDefault("SSH_USER", "vagrant")
+	sshKeyPath = getSSHKeyPath()
+	vboxManage = getVBoxManagePath()
+
 	bridgeAdapter = getEnvOrDefault("BRIDGE_ADAPTER", "eth0")
 
-	// Configuración para ejecutar VBoxManage remotamente en el HOST desde la VM
-	vboxHostIP   = getEnvOrDefault("VBOX_HOST_IP", "") // Si está vacío, ejecuta VBoxManage localmente
+	vboxHostIP   = getEnvOrDefault("VBOX_HOST_IP", "")
 	vboxHostUser = getEnvOrDefault("VBOX_HOST_USER", "usuario_host")
 )
+
+func getSSHKeyPath() string {
+	if val := os.Getenv("SSH_KEY_PATH"); val != "" {
+		return val
+	}
+	home, _ := os.UserHomeDir()
+	// Ruta por defecto para la llave insegura de Vagrant
+	return filepath.Join(home, ".vagrant.d", "insecure_private_key")
+}
+
+func getVBoxManagePath() string {
+	if val := os.Getenv("VBOX_MANAGE"); val != "" {
+		return val
+	}
+	if runtime.GOOS == "windows" {
+		return `C:\Program Files\Oracle\VirtualBox\VBoxManage.exe`
+	}
+	return "VBoxManage"
+}
 
 func getEnvOrDefault(key, defaultVal string) string {
 	if val := os.Getenv(key); val != "" {

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -57,6 +58,42 @@ func saveInstances(insts []Instance) error {
 		return os.WriteFile("instances.json", data, 0644)
 	}
 	return nil
+}
+
+func getVBoxDefaultFolder() string {
+	out, err := runVBoxQuiet("list", "systemproperties")
+	if err != nil {
+		home, _ := os.UserHomeDir()
+		return filepath.Join(home, "VirtualBox VMs")
+	}
+	lines := strings.Split(out, "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "Default machine folder:") {
+			return strings.TrimSpace(strings.Split(line, ":")[1])
+		}
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, "VirtualBox VMs")
+}
+
+func getPlantillaDiskUUID() (string, error) {
+	out, _ := runVBoxQuiet("showvminfo", "plantilla_http_base", "--machinereadable")
+	lines := strings.Split(out, "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "\"SATA-0-0\"=") {
+			return strings.Trim(strings.Split(line, "=")[1], "\""), nil
+		}
+	}
+	// Fallback: buscar en la lista general de HDDs
+	out, _ = runVBoxQuiet("list", "hdds")
+	hdds := strings.Split(out, "UUID:")
+	for _, hdd := range hdds {
+		if strings.Contains(hdd, "plantilla_http_base") {
+			lines := strings.Split(hdd, "\n")
+			return strings.TrimSpace(lines[0]), nil
+		}
+	}
+	return "", fmt.Errorf("no se pudo encontrar el disco de la plantilla")
 }
 
 func getNextFreeIP() (string, error) {
@@ -118,15 +155,21 @@ func handleProvision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Buscar el disco de la plantilla (normal, no multiattach)
-	plantillaDiskUUID := "3d313060-9390-4ca0-9f24-c8ec29ee8c1c"
+	// 3. Buscar el disco de la plantilla dinámicamente
+	plantillaDiskUUID, err := getPlantillaDiskUUID()
+	if err != nil {
+		jsonError(w, err.Error())
+		return
+	}
 
 	// 4. Clonar el disco de la plantilla para este clon
 	vmName := "web-" + nombre
-	cloneDiskPath := fmt.Sprintf("/home/yep/VirtualBox VMs/%s/%s.vdi", vmName, vmName)
+	vboxFolder := getVBoxDefaultFolder()
+	vmFolder := filepath.Join(vboxFolder, vmName)
+	cloneDiskPath := filepath.Join(vmFolder, vmName+".vdi")
 
 	// Crear directorio para la VM
-	os.MkdirAll(fmt.Sprintf("/home/yep/VirtualBox VMs/%s", vmName), 0755)
+	os.MkdirAll(vmFolder, 0755)
 
 	fmt.Printf("Clonando disco para %s...\n", vmName)
 	_, err = runVBox("clonemedium", plantillaDiskUUID, cloneDiskPath, "--format", "VDI")

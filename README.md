@@ -4,65 +4,70 @@ Un panel de control integral desarrollado en **Go** y **Vanilla HTML/JS** para l
 
 ---
 
-##  Arquitectura del Sistema
+## 🚀 Requisitos Previos (Antes de empezar)
 
-El proyecto utiliza un entorno híbrido de red para permitir la comunicación entre el Host y las VMs:
-- **Red NAT (eth0):** Acceso a Internet para descarga de paquetes.
-- **Red Host-Only (eth1/vboxnet0):** Red privada `192.168.10.0/24` para comunicación interna y servicios web.
-- **DNS Dinámico:** Servidor BIND9 integrado que registra automáticamente las nuevas instancias.
+Para que el proyecto funcione correctamente, el usuario debe tener instalado:
 
----
-
-##  Requisitos Previos
-
-1. **VirtualBox & Vagrant** instalados.
-2. **Go 1.22+** instalado en el host.
-3. **Red Host-Only:** Asegúrate de tener una interfaz `vboxnet0` configurada con la IP `192.168.10.1`.
-4. **Configuración de Resolución DNS (Host):**
-   Para que tu navegador resuelva los dominios `.cloud.local`, configura `systemd-resolved` en tu Linux:
-   ```bash
-   sudo mkdir -p /etc/systemd/resolved.conf.d
-   printf '[Resolve]\nDNS=192.168.10.10\nDomains=~cloud.local\n' | sudo tee /etc/systemd/resolved.conf.d/cloud-local.conf
-   sudo systemctl restart systemd-resolved
-   ```
+1.  **VirtualBox:** Motor de virtualización (asegúrate de que `VBoxManage` esté en el PATH o usa la ruta por defecto).
+2.  **Vagrant:** Para levantar la infraestructura base de forma automática.
+3.  **Go (Golang) 1.22+:** Para ejecutar el servidor de gestión.
+4.  **Red Host-Only:** Configura una red en VirtualBox llamada `vboxnet0` con la IP `192.168.10.1`.
 
 ---
 
-##  Instalación y Configuración
+## 🛠️ Guía de Configuración Rápida
 
-### 1. Levantar la Infraestructura Base
-El proyecto incluye un `Vagrantfile` que levanta el servidor DNS y la plantilla base:
+### 1. Preparar la Infraestructura Base
+Desde la raíz del proyecto, levanta el servidor DNS y la máquina plantilla:
 ```bash
 vagrant up
 ```
+*Nota: Esto creará automáticamente el dominio `cloud.local` y preparará una imagen de Debian lista para ser clonada.*
 
-### 2. Configurar Acceso SSH
-El gestor utiliza la llave insegura de Vagrant por defecto para configurar los clones:
-- **Usuario:** `vagrant`
-- **Llave:** `~/.vagrant.d/insecure_private_key`
+### 2. Configurar el Host (Resolución de Dominios)
+Para que tu navegador reconozca los dominios `.cloud.local`, elige tu sistema operativo:
 
-### 3. Ejecutar el Gestor
+#### **En Linux (systemd-resolved):**
 ```bash
-go run .
+sudo mkdir -p /etc/systemd/resolved.conf.d
+printf '[Resolve]\nDNS=192.168.10.10\nDomains=~cloud.local\n' | sudo tee /etc/systemd/resolved.conf.d/cloud-local.conf
+sudo systemctl restart systemd-resolved
 ```
-Accede a la interfaz en [http://localhost:8090](http://localhost:8090).
+
+#### **En Windows:**
+1. Ve a "Conexiones de Red".
+2. Propiedades del adaptador "VirtualBox Host-Only Network".
+3. TCP/IPv4 > Propiedades.
+4. Servidor DNS preferido: `192.168.10.10`.
 
 ---
 
-##  Estructura del Proyecto
+## 💻 Ejecución del Proyecto
 
-- `main.go`: Servidor central y API de gestión de VirtualBox.
-- `httpaas.go`: Pipeline de aprovisionamiento (Clonación de discos, inyección de red e IP).
-- `dns.go`: Integración con BIND9 mediante `nsupdate`.
-- `autoscaler.go`: Lógica experimental de auto-escalado basado en carga.
-- `index.html`: Interfaz web moderna (Glassmorphism).
-- `Vagrantfile`: Definición de la infraestructura base (DNS, Plantilla).
+Una vez que `vagrant up` termine con éxito:
+1. Asegúrate de que la máquina `plantilla_http_base` esté apagada (Vagrant la deja encendida).
+2. Ejecuta el gestor:
+   ```bash
+   go run .
+   ```
+3. Abre tu navegador en [http://localhost:8090](http://localhost:8090).
+
+---
+
+## 🤖 Prompt para Asistente AI (Análisis y Configuración)
+
+Si necesitas ayuda para adaptar este proyecto a tu entorno específico, copia y pega el siguiente prompt en tu IA favorita (ChatGPT, Claude, Gemini):
+
+> "Estoy configurando el proyecto 'Gestor de Demonios', un orquestador de VMs con Go y VirtualBox. El proyecto utiliza un Vagrantfile para levantar un DNS (192.168.10.10) y una plantilla (192.168.10.30). Necesito que analices mi sistema operativo actual y me des los pasos exactos para: 1. Configurar mi adaptador de red para alcanzar la IP del DNS. 2. Configurar la resolución de dominios para que '*.cloud.local' sea resuelto por la VM DNS. 3. Verificar que las rutas de VBoxManage y las llaves de Vagrant sean detectadas correctamente por el código de Go. Por favor, sé específico con los comandos según mi shell."
 
 ---
 
-##  Notas Importantes
-- **Clonación de Discos:** El sistema utiliza `clonemedium` para crear discos independientes por cada instancia. Asegúrate de que la máquina `plantilla_http_base` esté apagada antes de crear nuevos clones.
-- **Dominios .local:** El uso del sufijo `~` en la configuración de `resolved` es crucial para evitar conflictos con mDNS/Avahi.
+## 📂 Estructura del Proyecto
+- `main.go`: Servidor central (Portable: detecta rutas de Windows/Linux automáticamente).
+- `httpaas.go`: Lógica de clonación de discos e inyección de red.
+- `dns.go`: Integración dinámica con BIND9.
+- `index.html`: Dashboard web moderno con Glassmorphism.
+- `Vagrantfile`: Definición de servidores base (DNS y Plantilla).
 
 ---
-*Desarrollado para la automatización de despliegues locales y orquestación de microservicios.*
+*Este proyecto es totalmente portátil y no requiere rutas hardcodeadas.*
