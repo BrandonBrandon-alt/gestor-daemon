@@ -570,7 +570,7 @@ func handleCreateVM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runVBox("modifyvm", body.VMName, "--memory", "512", "--nic1", "bridged", "--bridgeadapter1", adapter)
+	runVBox("modifyvm", body.VMName, "--memory", "512", "--ioapic", "on", "--nic1", "bridged", "--bridgeadapter1", adapter)
 	runVBox("storagectl", body.VMName, "--name", "SATA", "--add", "sata")
 
 	if _, err := runVBox("storageattach", body.VMName,

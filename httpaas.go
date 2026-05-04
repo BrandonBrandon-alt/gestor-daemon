@@ -113,34 +113,47 @@ return filepath.Join(home, "VirtualBox VMs")
 // It parses showvminfo output to find the first attached storage medium (.vdi or .vmdk).
 // Returns the disk UUID string or an error if the disk cannot be located.
 func getPlantillaDiskUUID() (string, error) {
+	// Primero obtenemos el disco actualmente asociado a la plantilla
 	out, _ := runVBoxQuiet("showvminfo", "plantilla_http_base", "--machinereadable")
+	var attachedUUID string
 	lines := strings.Split(out, "\n")
 	for _, line := range lines {
-		lineLower := strings.ToLower(line)
-		// Look for lines containing disk images (.vdi or .vmdk)
-		if (strings.Contains(lineLower, ".vdi") || strings.Contains(lineLower, ".vmdk")) && strings.Contains(line, "-ImageUUID-") {
+		if strings.Contains(line, "-ImageUUID-0-0") {
 			parts := strings.SplitN(line, "=", 2)
 			if len(parts) == 2 {
-				return strings.Trim(parts[1], "\"\r\n "), nil
+				attachedUUID = strings.Trim(parts[1], "\"\r\n ")
+				break
 			}
 		}
 	}
 
-	// Fallback: search through all HDDs for template reference
-	out, _ = runVBoxQuiet("list", "hdds")
-	// Split by double newline to separate HDD blocks
-	blocks := strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n\n")
-	for _, block := range blocks {
-		if strings.Contains(block, "plantilla_http_base") {
-			lines := strings.Split(block, "\n")
-			for _, l := range lines {
-				if strings.HasPrefix(l, "UUID:") && !strings.Contains(l, "Parent UUID:") {
-					return strings.TrimSpace(strings.TrimPrefix(l, "UUID:")), nil
+	if attachedUUID == "" {
+		return "", fmt.Errorf("no se encontró disco asociado a plantilla_http_base")
+	}
+
+	// Rastreamos la jerarquía hacia arriba para encontrar el disco base
+	// (esencial porque el modo multiattach utiliza discos de diferenciación)
+	currentUUID := attachedUUID
+	for {
+		infoOut, _ := runVBoxQuiet("showmediuminfo", currentUUID)
+		var parentUUID string
+		isBase := false
+		for _, line := range strings.Split(infoOut, "\n") {
+			if strings.HasPrefix(line, "Parent UUID:") {
+				parentUUID = strings.TrimSpace(strings.TrimPrefix(line, "Parent UUID:"))
+				if parentUUID == "base" {
+					isBase = true
 				}
 			}
 		}
+		if isBase {
+			return currentUUID, nil // Encontramos el disco raíz
+		}
+		if parentUUID == "" {
+			return currentUUID, nil // Fallback
+		}
+		currentUUID = parentUUID
 	}
-	return "", fmt.Errorf("no se pudo encontrar el disco de la plantilla (asegúrate de que 'plantilla_http_base' existe y tiene un disco)")
 }
 
 // getNextFreeIP allocates the next available IP address from the instance pool.
@@ -251,6 +264,7 @@ if err != nil {
 // NIC1: NAT con reenvío de puerto SSH (para configuración inicial)
 // NIC2: Red interna vboxnet0 (para la IP estática final)
 runVBox("modifyvm", vmName, "--memory", "512",
+	"--ioapic", "on",
 	"--nic1", "nat",
 	"--natpf1", fmt.Sprintf("ssh,tcp,127.0.0.1,%s,,22", sshPort),
 	"--nic2", "hostonly", "--hostonlyadapter2", "vboxnet0")

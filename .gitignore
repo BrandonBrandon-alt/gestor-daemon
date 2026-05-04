@@ -1,0 +1,24 @@
+# Binarios compilados de Go
+*.exe
+gestor-daemon
+main
+
+# Carpetas y archivos de estado de Vagrant
+.vagrant/
+
+# Archivos de estado dinámico del daemon (no subir a Git)
+instances.json
+haproxy_state.json
+
+# Logs generados por VirtualBox Headless
+*.log
+
+# Archivos temporales o de prueba
+*.zip
+*.tar.gz
+temp_*
+*.tmp
+
+# Archivos de SO
+.DS_Store
+Thumbs.db

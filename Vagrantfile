@@ -1,38 +1,70 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+# =================================================================
+# CONFIGURACIÓN DE VARIABLES GLOBALES
+# =================================================================
+NETWORK_PREFIX  = "192.168.10"
+DNS_IP          = "#{NETWORK_PREFIX}.10"
+PLANTILLA_IP    = "#{NETWORK_PREFIX}.30"
+GESTION_IP      = "#{NETWORK_PREFIX}.50"
+DNS_ZONE        = "cloud.local"
+GO_VERSION      = "1.22.3"
+
+# Función reutilizable: configura DNS interno rompiendo el enlace de systemd-resolved
+$configure_dns = <<~SHELL
+  echo ">>> Configurando DNS interno..."
+  # Se elimina el symlink para evitar problemas con systemd-resolved en Debian 12
+  rm -f /etc/resolv.conf 
+  cat > /etc/resolv.conf <<EOF
+nameserver #{DNS_IP}
+search #{DNS_ZONE}
+EOF
+  # Protege el archivo contra cambios de otros servicios (DHCP/NetworkManager)
+  chattr +i /etc/resolv.conf
+SHELL
+
 Vagrant.configure("2") do |config|
+
   config.vm.box = "debian/bookworm64"
   config.ssh.insert_key = false
 
-  # Deshabilitar vbguest: la box trae Guest Additions 6.0.0 pero VirtualBox es 7.x.
-  # El plugin intenta instalar linux-headers que ya no están en los repos.
-  if Vagrant.has_plugin?("vagrant-vbguest")
-    config.vbguest.auto_update = false
-  end
+  config.vbguest.auto_update = false if Vagrant.has_plugin?("vagrant-vbguest")
 
-  # Deshabilitar synced folder (también previene el intento de montar vboxsf)
+  # Previene montar vboxsf (incompatible con multiattach)
   config.vm.synced_folder ".", "/vagrant", disabled: true
 
+  # Configuración base VirtualBox compartida
+  config.vm.provider "virtualbox" do |vb|
+    vb.linked_clone = false
+    vb.customize ["modifyvm", :id, "--natdnshostresolver1", "on"]
+    vb.customize ["modifyvm", :id, "--ioapic", "on"]
+  end
+
   # =================================================================
-  # 1. SERVIDOR DNS (BIND9)
-  # IP: 192.168.10.10
+  # 1. SERVIDOR DNS (BIND9) — 192.168.10.10
   # =================================================================
   config.vm.define "ns" do |ns|
-    ns.vm.hostname = "ns.cloud.local"
+    ns.vm.hostname = "ns.#{DNS_ZONE}"
+    ns.vm.network "private_network", ip: DNS_IP, adapter: 2
 
     ns.vm.provider "virtualbox" do |vb|
       vb.name   = "servidor_dns_proyecto"
       vb.memory = "512"
+      vb.cpus   = 1
     end
 
-    ns.vm.network "private_network", ip: "192.168.10.10", adapter: 2
+    ns.vm.provision "shell", name: "ns-setup", inline: <<~SHELL
+      set -euo pipefail
+      export DEBIAN_FRONTEND=noninteractive
 
-    ns.vm.provision "shell", name: "ns-setup", inline: <<-'SHELL'
-      set -e
-      echo ">>> [ns] Actualizando repos..."
+      echo ">>> [ns] Actualizando repositorios..."
       apt-get update -qq
 
       echo ">>> [ns] Instalando BIND9..."
       apt-get install -y bind9 bind9utils bind9-doc dnsutils
 
+      echo ">>> [ns] Configurando named.conf.options..."
       cat > /etc/bind/named.conf.options <<'EOF'
 options {
     directory "/var/cache/bind";
@@ -40,145 +72,179 @@ options {
     allow-query { any; };
     listen-on { any; };
     dnssec-validation no;
+    version "hidden";
 };
 EOF
 
+      echo ">>> [ns] Configurando zona #{DNS_ZONE}..."
       cat > /etc/bind/named.conf.local <<'EOF'
-zone "cloud.local" {
+zone "#{DNS_ZONE}" {
     type master;
-    file "/var/lib/bind/db.cloud.local";
-    allow-update { 192.168.10.0/24; };
+    file "/var/lib/bind/db.#{DNS_ZONE}";
+    allow-update { #{NETWORK_PREFIX}.0/24; };
+    notify yes;
 };
 EOF
 
-      cat > /var/lib/bind/db.cloud.local <<'EOF'
+      echo ">>> [ns] Creando zona forward..."
+      cat > /var/lib/bind/db.#{DNS_ZONE} <<'EOF'
 $TTL 604800
-@   IN  SOA ns.cloud.local. admin.cloud.local. (
-            2026050301 ; Serial
-            604800     ; Refresh
-            86400      ; Retry
-            2419200    ; Expire
-            604800 )   ; Negative TTL
+@   IN  SOA ns.#{DNS_ZONE}. admin.#{DNS_ZONE}. (
+            2026050301 ; Serial  (YYYYMMDDNN)
+            604800     ; Refresh (7d)
+            86400      ; Retry   (1d)
+            2419200    ; Expire  (28d)
+            604800 )   ; Negative Cache TTL
 
-@           IN  NS  ns.cloud.local.
+; Servidores de nombres
+@       IN  NS  ns.#{DNS_ZONE}.
 
-ns          IN  A   192.168.10.10
-plantilla   IN  A   192.168.10.30
-gestion     IN  A   192.168.10.50
+; Registros A
+ns        IN  A   #{DNS_IP}
+plantilla IN  A   #{PLANTILLA_IP}
+gestion   IN  A   #{GESTION_IP}
 EOF
 
       chown -R bind:bind /var/lib/bind
+
+      echo ">>> [ns] Verificando configuración..."
       named-checkconf
-      named-checkzone cloud.local /var/lib/bind/db.cloud.local
-      systemctl restart bind9
-      echo ">>> [ns] Bind9 levantado."
-      sleep 1
-      dig @192.168.10.10 ns.cloud.local +short || true
+      named-checkzone #{DNS_ZONE} /var/lib/bind/db.#{DNS_ZONE}
+
+      echo ">>> [ns] Iniciando BIND9..."
+      systemctl enable --now named
+
+      echo ">>> [ns] Verificando resolución DNS..."
+      sleep 2
+      dig @#{DNS_IP} ns.#{DNS_ZONE} +short
+      dig @#{DNS_IP} plantilla.#{DNS_ZONE} +short
+      dig @#{DNS_IP} gestion.#{DNS_ZONE} +short
+      echo ">>> [ns] DNS operativo."
     SHELL
   end
 
   # =================================================================
-  # 2. PLANTILLA BASE HTTP (Apache2)
-  # IP: 192.168.10.30
-  # Instalar paquetes PRIMERO (NAT con internet), DNS interno AL FINAL
+  # 2. PLANTILLA BASE HTTP (Apache2) — 192.168.10.30
   # =================================================================
   config.vm.define "plantilla" do |pl|
-    pl.vm.hostname = "plantilla.cloud.local"
+    pl.vm.hostname = "plantilla.#{DNS_ZONE}"
+    pl.vm.network "private_network", ip: PLANTILLA_IP, adapter: 2
 
     pl.vm.provider "virtualbox" do |vb|
       vb.name   = "plantilla_http_base"
       vb.memory = "512"
+      vb.cpus   = 1
     end
 
-    pl.vm.network "private_network", ip: "192.168.10.30", adapter: 2
+    pl.vm.provision "shell", name: "plantilla-setup", inline: <<~SHELL
+      set -euo pipefail
+      export DEBIAN_FRONTEND=noninteractive
 
-    pl.vm.provision "shell", name: "plantilla-setup", inline: <<-'SHELL'
-      set -e
-      echo ">>> [plantilla] Actualizando repos..."
       apt-get update -qq
-
-      echo ">>> [plantilla] Instalando Apache2..."
       apt-get install -y apache2 unzip curl
 
       cat > /var/www/html/index.html <<'EOF'
 <!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><title>Plantilla HTTP Base</title></head>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Plantilla HTTP Base</title>
+</head>
 <body>
   <h1>Plantilla Base HTTP</h1>
-  <p>Host: plantilla.cloud.local (192.168.10.30)</p>
-  <p>Estado: lista para clonar</p>
+  <p>Host: plantilla.#{DNS_ZONE} (#{PLANTILLA_IP})</p>
 </body>
 </html>
 EOF
 
-      systemctl enable apache2
-      systemctl start apache2
+      a2dissite 000-default.conf 2>/dev/null || true
+      cat > /etc/apache2/sites-available/plantilla.conf <<'EOF'
+<VirtualHost *:80>
+    ServerName plantilla.#{DNS_ZONE}
+    DocumentRoot /var/www/html
+</VirtualHost>
+EOF
+      a2ensite plantilla.conf
+      systemctl enable --now apache2
 
-      echo ">>> [plantilla] Configurando DNS interno (al final para no romper apt)..."
-      printf 'nameserver 192.168.10.10\nsearch cloud.local\n' > /etc/resolv.conf
-
+      #{$configure_dns}
       echo ">>> [plantilla] Listo."
     SHELL
 
-    # Automatizar la conversión del disco a MULTIATTACH para permitir clonación en caliente
     pl.trigger.after :up do |trigger|
-      trigger.info = "Convirtiendo disco de plantilla a MULTIATTACH..."
-      trigger.run = { inline: <<-'BASH'
-        VM_NAME="plantilla_http_base"
-        # 1. Obtener el UUID del disco
-        DISK_UUID=$(VBoxManage showvminfo "$VM_NAME" --machinereadable | grep "SATA Controller-ImageUUID-0-0" | cut -d'=' -f2 | tr -d '"')
-        if [ -z "$DISK_UUID" ]; then
-          echo "No se pudo encontrar el UUID del disco."
-          exit 0
-        fi
-        # 2. Apagar brevemente para cambiar el tipo (solo si es necesario)
-        VBoxManage controlvm "$VM_NAME" poweroff 2>/dev/null || true
-        sleep 2
-        # 3. Desvincular, cambiar tipo y volver a vincular
-        VBoxManage storageattach "$VM_NAME" --storagectl "SATA Controller" --port 0 --device 0 --medium none
-        VBoxManage modifymedium disk "$DISK_UUID" --type multiattach
-        VBoxManage storageattach "$VM_NAME" --storagectl "SATA Controller" --port 0 --device 0 --type hdd --medium "$DISK_UUID"
-        # 4. Volver a encender
-        VBoxManage startvm "$VM_NAME" --type headless
-        echo ">>> Disco de plantilla configurado como MULTIATTACH correctamente."
-      BASH
+      trigger.info = "Configurando disco de plantilla como MULTIATTACH..."
+      trigger.run = {
+        inline: "bash -c '
+          VM_NAME=\"plantilla_http_base\"
+          
+          # Obtenemos el disco REALMENTE adjunto a la VM, ignorando fantasmas del registro
+          DISK_UUID=$(VBoxManage showvminfo \"$VM_NAME\" --machinereadable | grep \"SATA Controller-ImageUUID-0-0\" | cut -d\"=\" -f2 | tr -d \"\\\"\")
+          
+          if [ -z \"$DISK_UUID\" ]; then
+            echo \">>> ERROR: No se encontró disco adjunto.\"
+            exit 1
+          fi
+
+          # Si es un disco de diferenciación, el base ya es multiattach
+          PARENT_UUID=$(VBoxManage showmediuminfo \"$DISK_UUID\" | grep \"Parent UUID:\" | awk \"{print \\$3}\")
+          if [ \"$PARENT_UUID\" != \"base\" ]; then
+            echo \">>> El disco actual es un snapshot/diferenciación. El base ya está protegido.\"
+            exit 0
+          fi
+
+          # Si llegamos aquí, es el disco base. Verificamos si ya es multiattach
+          CURRENT_TYPE=$(VBoxManage showmediuminfo \"$DISK_UUID\" | grep \"Type:\" | awk \"{print \\$2}\")
+          if [ \"$CURRENT_TYPE\" = \"multiattach\" ]; then
+            echo \">>> El disco base ya es MULTIATTACH.\"
+            exit 0
+          fi
+
+          echo \">>> Configurando disco base $DISK_UUID como MULTIATTACH...\"
+          VBoxManage controlvm \"$VM_NAME\" poweroff 2>/dev/null || true
+          sleep 3
+          VBoxManage storageattach \"$VM_NAME\" --storagectl \"SATA Controller\" --port 0 --device 0 --medium none
+          VBoxManage modifymedium disk \"$DISK_UUID\" --type multiattach
+          VBoxManage storageattach \"$VM_NAME\" --storagectl \"SATA Controller\" --port 0 --device 0 --type hdd --medium \"$DISK_UUID\"
+          VBoxManage startvm \"$VM_NAME\" --type headless
+          echo \">>> MULTIATTACH configurado con éxito en el disco real.\"
+        '"
       }
     end
   end
 
   # =================================================================
-  # 3. SERVIDOR DE GESTIÓN (Golang)
-  # IP: 192.168.10.50
-  # Instalar paquetes PRIMERO, DNS interno AL FINAL
+  # 3. SERVIDOR DE GESTIÓN (Golang) — 192.168.10.50
   # =================================================================
   config.vm.define "gestion" do |ges|
-    ges.vm.hostname = "gestion.cloud.local"
+    ges.vm.hostname = "gestion.#{DNS_ZONE}"
+    ges.vm.network "private_network", ip: GESTION_IP, adapter: 2
 
     ges.vm.provider "virtualbox" do |vb|
       vb.name   = "servidor_gestion_golang"
       vb.memory = "1024"
+      vb.cpus   = 2
     end
 
-    ges.vm.network "private_network", ip: "192.168.10.50", adapter: 2
+    ges.vm.provision "shell", name: "gestion-setup", inline: <<~SHELL
+      set -euo pipefail
+      export DEBIAN_FRONTEND=noninteractive
 
-    ges.vm.provision "shell", name: "gestion-setup", inline: <<-'SHELL'
-      set -e
-      echo ">>> [gestion] Actualizando repos..."
       apt-get update -qq
+      apt-get install -y git curl wget dnsutils build-essential
 
-      echo ">>> [gestion] Instalando dependencias..."
-      apt-get install -y git curl wget dnsutils
+      GO_VERSION=\"#{GO_VERSION}\"
+      GO_TAR=\"go${GO_VERSION}.linux-amd64.tar.gz\"
+      
+      echo \">>> [gestion] Descargando Go...\"
+      wget -q \"https://go.dev/dl/${GO_TAR}\" -O \"/tmp/${GO_TAR}\"
 
-      GO_VERSION="1.22.3"
-      echo ">>> [gestion] Descargando Go ${GO_VERSION}..."
-      wget -q "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -O /tmp/go.tar.gz
+      EXPECTED=\"8920ea521bad8f6b7bc377b4824982e011c19af27df88a815e3586ea895f1b36\"
+      ACTUAL=$(sha256sum \"/tmp/${GO_TAR}\" | awk '{print $1}')
+      if [ \"$EXPECTED\" != \"$ACTUAL\" ]; then exit 1; fi
 
-      echo ">>> [gestion] Instalando Go..."
       rm -rf /usr/local/go
-      tar -C /usr/local -xzf /tmp/go.tar.gz
-      rm /tmp/go.tar.gz
-
+      tar -C /usr/local -xzf \"/tmp/${GO_TAR}\"
+      
       cat > /etc/profile.d/golang.sh <<'EOF'
 export PATH=$PATH:/usr/local/go/bin
 export GOPATH=/home/vagrant/go
@@ -186,13 +252,12 @@ export PATH=$PATH:$GOPATH/bin
 EOF
       chmod +x /etc/profile.d/golang.sh
       export PATH=$PATH:/usr/local/go/bin
-      echo ">>> [gestion] Go instalado: $(go version)"
-    
-      echo ">>> [gestion] Configurando DNS interno (al final para no romper wget)..."
-      printf 'nameserver 192.168.10.10\nsearch cloud.local\n' > /etc/resolv.conf
+      
+      mkdir -p /home/vagrant/go/{bin,src,pkg}
+      chown -R vagrant:vagrant /home/vagrant/go
 
-      echo ">>> [gestion] Listo."
+      #{$configure_dns}
+      echo \">>> [gestion] Listo.\"
     SHELL
   end
-
 end
