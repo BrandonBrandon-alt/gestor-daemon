@@ -1,3 +1,6 @@
+// Package main implements a VirtualBox infrastructure orchestrator daemon.
+// It manages VM lifecycle, network configuration, DNS registration, and auto-scaling
+// for cloud-based deployment environments running on VirtualBox.
 package main
 
 import (
@@ -22,28 +25,42 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// ─── Configuración ───────────────────────────────────────────────────────────
-
+// Configuration variables for SSH connections, VirtualBox management, and networking.
+// These can be overridden via environment variables for flexibility in different deployment scenarios.
 var (
+	// sshUser specifies the remote user for SSH connections (default: "vagrant")
 	sshUser    = getEnvOrDefault("SSH_USER", "vagrant")
+	// sshKeyPath points to the SSH private key file (default: Vagrant insecure key)
 	sshKeyPath = getSSHKeyPath()
+	// vboxManage path to the VBoxManage executable, auto-detected per OS
 	vboxManage = getVBoxManagePath()
 
+	// bridgeAdapter specifies the network adapter for bridged connections (default: "eth0")
 	bridgeAdapter = getEnvOrDefault("BRIDGE_ADAPTER", "eth0")
 
+	// vboxHostIP is the IP of a remote VirtualBox host for remote VM management (optional)
 	vboxHostIP   = getEnvOrDefault("VBOX_HOST_IP", "")
+	// vboxHostUser username for authentication on remote VirtualBox host
 	vboxHostUser = getEnvOrDefault("VBOX_HOST_USER", "usuario_host")
 )
 
+// getSSHKeyPath retrieves the path to the SSH private key file.
+// It checks SSH_KEY_PATH environment variable first, then falls back to Vagrant's insecure key.
+// Returns the path to the SSH private key file for authentication.
 func getSSHKeyPath() string {
 	if val := os.Getenv("SSH_KEY_PATH"); val != "" {
 		return val
 	}
 	home, _ := os.UserHomeDir()
-	// Ruta por defecto para la llave insegura de Vagrant
+	// Default to Vagrant's insecure private key if no custom key is provided
 	return filepath.Join(home, ".vagrant.d", "insecure_private_key")
 }
 
+// getVBoxManagePath retrieves the path to the VBoxManage executable.
+// Automatically detects the correct path based on the operating system:
+// Windows: C:\Program Files\Oracle\VirtualBox\VBoxManage.exe
+// Linux/macOS: searches in PATH as "VBoxManage"
+// Returns the path to the VBoxManage executable or a command name if not found.
 func getVBoxManagePath() string {
 	if val := os.Getenv("VBOX_MANAGE"); val != "" {
 		return val
@@ -54,6 +71,10 @@ func getVBoxManagePath() string {
 	return "VBoxManage"
 }
 
+// getEnvOrDefault retrieves an environment variable value or returns a default value.
+// key: environment variable name to retrieve
+// defaultVal: value to return if the environment variable is not set or empty
+// Returns the environment variable value or the default value if not found.
 func getEnvOrDefault(key, defaultVal string) string {
 	if val := os.Getenv(key); val != "" {
 		return val
@@ -61,14 +82,17 @@ func getEnvOrDefault(key, defaultVal string) string {
 	return defaultVal
 }
 
-// ─── SSH Config centralizada ─────────────────────────────────────────────────
-
+// buildSSHConfig constructs an SSH client configuration for remote command execution.
+// It attempts to use public key authentication first (from sshKeyPath), falling back
+// to password authentication using the sshUser value. The connection ignores host key verification
+// suitable for development/test environments but not recommended for production.
+// Returns a configured *ssh.ClientConfig ready for SSH connections, or an error if setup fails.
 func buildSSHConfig() (*ssh.ClientConfig, error) {
 	authMethods := []ssh.AuthMethod{
-		ssh.Password(sshUser), // Fallback: intenta usar el mismo nombre de usuario como contraseña
+		ssh.Password(sshUser), // Fallback: tries to use the username as password
 	}
 
-	// Solo intentamos agregar la llave si el archivo existe
+	// Attempt to load private key if file exists; otherwise continue with password auth
 	if key, err := os.ReadFile(sshKeyPath); err == nil {
 		if signer, err := ssh.ParsePrivateKey(key); err == nil {
 			authMethods = append([]ssh.AuthMethod{ssh.PublicKeys(signer)}, authMethods...)
@@ -83,8 +107,9 @@ func buildSSHConfig() (*ssh.ClientConfig, error) {
 	}, nil
 }
 
-// ─── SSH y SCP ───────────────────────────────────────────────────────────────
-
+// sshClient establishes an SSH connection to a remote machine.
+// ip: IP address of the target machine (port 22 is assumed)
+// Returns an established *ssh.Client for remote command execution or an error.
 func sshClient(ip string) (*ssh.Client, error) {
 	config, err := buildSSHConfig()
 	if err != nil {
@@ -93,6 +118,10 @@ func sshClient(ip string) (*ssh.Client, error) {
 	return ssh.Dial("tcp", ip+":22", config)
 }
 
+// runSSH executes a command on a remote machine via SSH and returns the combined output.
+// ip: IP address of the target machine
+// command: shell command to execute on the remote machine
+// Returns command output as string and any error that occurred during execution.
 func runSSH(ip, command string) (string, error) {
 	client, err := sshClient(ip)
 	if err != nil {
@@ -108,6 +137,11 @@ func runSSH(ip, command string) (string, error) {
 	return string(out), err
 }
 
+// uploadFile transfers a file from the local machine to a remote machine using SCP.
+// ip: IP address of the target machine
+// localPath: path to the local file to upload
+// remotePath: destination path on the remote machine (with executable permissions 0755)
+// Returns an error if the upload fails at any stage.
 func uploadFile(ip, localPath, remotePath string) error {
 	config, err := buildSSHConfig()
 	if err != nil {
@@ -129,6 +163,12 @@ func uploadFile(ip, localPath, remotePath string) error {
 	return nil
 }
 
+// createRemoteFile creates or overwrites a file on a remote machine via SSH.
+// It writes content to a temporary local file, uploads it via SCP, then moves it to the target location.
+// ip: IP address of the target machine
+// remotePath: full path where the file will be created/stored on the remote machine
+// content: file content to write
+// Returns an error if any step of the process fails.
 func createRemoteFile(ip, remotePath, content string) error {
 	tmpFile, err := os.CreateTemp("", "service-*.service")
 	if err != nil {
@@ -148,16 +188,19 @@ func createRemoteFile(ip, remotePath, content string) error {
 	return err
 }
 
-// ─── VBoxManage (Soporta ejecución remota en Host) ───────────────────────────
-
+// runVBox executes VBoxManage commands, supporting both local and remote execution.
+// If vboxHostIP is configured, the command runs on a remote VirtualBox host via SSH.
+// Otherwise, it executes locally. Output is logged to stdout.
+// args: VBoxManage command arguments
+// Returns command output as string and any error encountered.
 func runVBox(args ...string) (string, error) {
 	fmt.Printf("VBox: %s\n", strings.Join(args, " "))
 	
 	if vboxHostIP != "" {
-		// Ejecutar vía SSH en el host físico
+		// Remote execution via SSH on physical host
 		cmd := fmt.Sprintf("%s %s", vboxManage, strings.Join(args, " "))
 		
-		// Crear config SSH temporal para el host
+		// Temporary SSH config for remote host authentication
 		key, err := os.ReadFile(sshKeyPath)
 		if err != nil {
 			return "", fmt.Errorf("no se pudo leer llave SSH del host: %v", err)
@@ -189,7 +232,7 @@ func runVBox(args ...string) (string, error) {
 		return string(out), err
 	}
 
-	// Ejecución local (Si se corre desde el host directamente)
+	// Local execution (when running directly on the host)
 	out, err := exec.Command(vboxManage, args...).CombinedOutput()
 	if err != nil {
 		fmt.Printf("Error: %v | %s\n", err, string(out))
@@ -197,6 +240,10 @@ func runVBox(args ...string) (string, error) {
 	return string(out), err
 }
 
+// getVMIP retrieves the IPv4 address of a running VM via VirtualBox Guest Additions.
+// Polls the guest property for up to 90 seconds (18 attempts × 5-second intervals).
+// vmName: name of the virtual machine to query
+// Returns the IPv4 address if found, or an error if timeout occurs.
 func getVMIP(vmName string) (string, error) {
 	fmt.Printf("Esperando IP de '%s' via Guest Additions...\n", vmName)
 	for i := 0; i < 18; i++ {
@@ -217,6 +264,10 @@ func getVMIP(vmName string) (string, error) {
 	return "", fmt.Errorf("tiempo agotado esperando IP de '%s'", vmName)
 }
 
+// runVBoxQuiet executes VBoxManage commands without logging output to stdout.
+// Similar to runVBox but suppresses command output, useful for queries that don't need to be logged.
+// args: VBoxManage command arguments
+// Returns command output as string and any error encountered.
 func runVBoxQuiet(args ...string) (string, error) {
 	if vboxHostIP != "" {
 		cmd := fmt.Sprintf("%s %s", vboxManage, strings.Join(args, " "))
@@ -247,6 +298,9 @@ func runVBoxQuiet(args ...string) (string, error) {
 	return string(out), err
 }
 
+// listNetworkAdapters retrieves all available bridged network adapters on the system.
+// Parses VBoxManage output to extract adapter names for network bridge configuration.
+// Returns a slice of adapter names or an error if the listing fails.
 func listNetworkAdapters() ([]string, error) {
 	out, err := runVBoxQuiet("list", "bridgedifs")
 	if err != nil {
@@ -265,6 +319,11 @@ func listNetworkAdapters() ([]string, error) {
 	return adapters, nil
 }
 
+// fetchVMDetails retrieves detailed information about a specific VM including state and IP.
+// Queries the VM state, IPv4 address (if running), and custom guest properties.
+// name: VM name to query
+// uuid: VM UUID (currently unused but kept for API compatibility)
+// Returns a map with keys: "name", "uuid", "state", "ip", "port" (values are "N/A" if unavailable).
 func fetchVMDetails(name, uuid string) map[string]string {
 	stateOut, _ := runVBoxQuiet("showvminfo", name, "--machinereadable")
 	state := "desconocido"
@@ -304,6 +363,9 @@ func fetchVMDetails(name, uuid string) map[string]string {
 	return map[string]string{"name": name, "uuid": uuid, "state": state, "ip": ip, "port": port}
 }
 
+// displayVMStatusTable prints a formatted table of all VMs and their status to stdout.
+// Queries all registered VMs concurrently, collects their details, and displays them sorted by name.
+// If no VMs exist, displays an informational message. Called periodically to show current infrastructure state.
 func displayVMStatusTable() {
 	fmt.Println("\n=== ESTADO DEL ENTORNO DE MÁQUINAS VIRTUALES ===")
 	out, err := runVBoxQuiet("list", "vms")
@@ -365,21 +427,29 @@ func displayVMStatusTable() {
 	fmt.Println("====================================================\n")
 }
 
-// ─── Estructuras JSON ────────────────────────────────────────────────────────
-
+// Response is a generic HTTP API response structure for status and message communication.
+// Used for success confirmations, error reporting, and operation results.
 type Response struct {
+	// Success indicates whether the operation completed successfully
 	Success bool   `json:"success"`
+	// Message contains a human-readable status or error description
 	Message string `json:"message"`
 }
 
+// Disk represents a VirtualBox hard disk with metadata for inventory management.
+// Used in listing and selection operations for disk-based VM creation.
 type Disk struct {
+	// Name is the filename of the disk (extracted from path)
 	Name     string `json:"name"`
+	// Location is the absolute filesystem path to the disk file
 	Location string `json:"location"`
+	// UUID is the unique VirtualBox identifier for the disk
 	UUID     string `json:"uuid"`
 }
 
-// ─── Handlers API ────────────────────────────────────────────────────────────
-
+// handleListVMs processes HTTP GET requests to retrieve all registered virtual machines.
+// Queries VirtualBox for all VMs, concurrently retrieves their details, and returns JSON.
+// Returns array of maps containing: name, uuid, state, ip, port.
 func handleListVMs(w http.ResponseWriter, r *http.Request) {
 	out, err := runVBoxQuiet("list", "vms")
 	if err != nil {
@@ -421,6 +491,10 @@ func handleListVMs(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, vms)
 }
 
+// handleListDisks processes HTTP GET requests to retrieve all available VirtualBox disks.
+// Parses the raw VBoxManage output to extract disk UUID, location, and name.
+// Identifies multiattach disks (base disks cloned for multiple VMs).
+// Returns JSON array of Disk objects.
 func handleListDisks(w http.ResponseWriter, r *http.Request) {
 	out, err := runVBox("list", "hdds")
 	if err != nil {
@@ -453,6 +527,23 @@ func handleListDisks(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, disks)
 }
 
+// handleCreateVM processes HTTP POST requests to create a new VM from an existing disk.
+// Expected JSON body:
+//   - "vmName": unique VM name (required)
+//   - "diskUUID": UUID of disk to attach (required)
+//   - "port": application port for guest property storage (optional)
+//   - "bridgeAdapter": network adapter for bridged networking (optional, uses default if omitted)
+//
+// The handler performs:
+// 1. Validates required parameters (vmName and diskUUID)
+// 2. Creates VM group, CPU/memory configuration, chipset, and firmware
+// 3. Attaches the specified disk via SATA controller
+// 4. Configures network interface (bridge adapter for host connectivity)
+// 5. Enables audio input capture if supported
+// 6. Sets guest property for application port storage
+// 7. Starts VM in headless mode with 120-second boot timeout
+// 8. Retrieves IP via Guest Additions property and displays status
+// 9. Stores VM details in response
 func handleCreateVM(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		VMName        string `json:"vmName"`
@@ -516,6 +607,9 @@ func handleCreateVM(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleStopVM processes HTTP POST requests to gracefully shut down a running VM.
+// Expected JSON body: {"vmName": "vm-name"}
+// Sends poweroff signal and waits 3 seconds before refreshing the status table.
 func handleStopVM(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		VMName string `json:"vmName"`
@@ -542,6 +636,14 @@ func handleStopVM(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, Response{Success: true, Message: "Señal de apagado enviada a " + body.VMName})
 }
 
+// handleDeleteVM processes HTTP POST requests to permanently remove a VM and its storage.
+// Expected JSON body: {"vmName": "vm-name"}
+// The deletion process:
+// 1. Force power off the VM
+// 2. Wait 3 seconds for resources to be released
+// 3. Unregister VM from VirtualBox and delete all associated files
+// 4. Refresh status display
+// Attempts --delete-all first, falls back to --delete for version compatibility.
 func handleDeleteVM(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		VMName string `json:"vmName"`
@@ -577,6 +679,18 @@ func handleDeleteVM(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, Response{Success: true, Message: "La máquina " + body.VMName + " ha sido eliminada permanentemente del sistema"})
 }
 
+// handleApplyHAProxy processes HTTP POST requests to configure HAProxy load balancing.
+// Expected JSON body:
+//   - "lbIp": IP address of the HAProxy load balancer VM (required)
+//   - "servers": array of backend server objects, each containing name, ip, and port (required)
+//
+// The handler:
+// 1. Validates required parameters (lbIp and servers array)
+// 2. Builds HAProxy configuration file with frontend and backend sections
+// 3. Connects to HAProxy VM via SSH
+// 4. Uploads configuration and executes systemctl reload
+// 5. Initializes AutoScalingState if autoscaling is enabled
+// 6. Starts autoscaling monitor goroutine if needed
 func handleApplyHAProxy(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		LBIp    string `json:"lbIp"`
@@ -652,6 +766,15 @@ func handleApplyHAProxy(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, Response{Success: true, Message: "Balanceador en " + body.LBIp + " actualizado correctamente con " + fmt.Sprintf("%d", len(body.Servers)) + " servidores traseros."})
 }
 
+// handleHAProxyStatus processes HTTP GET requests to retrieve HAProxy load balancer statistics.
+// Query parameters: ip (IP address of HAProxy VM, required)
+// The handler:
+// 1. Validates that HAProxy VM IP is provided
+// 2. Connects to HAProxy via SSH and queries statistics socket
+// 3. Parses HAProxy CSV output from 'show stat' command
+// 4. Filters and returns active server statistics (excludes FRONTEND/BACKEND aggregate rows)
+// 5. Returns JSON array with pxname, svname, status, and current session count (scur)
+// Requires socat utility to be installed on HAProxy VM for socket communication.
 func handleHAProxyStatus(w http.ResponseWriter, r *http.Request) {
 	lbIp := r.URL.Query().Get("ip")
 	if lbIp == "" {
