@@ -10,22 +10,26 @@
     @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20,300,0,0');
 
     :root {
-      --bg-dark: #0a0a0c;
-      --sidebar-bg: rgba(20, 20, 24, 0.6);
-      --surface: rgba(255, 255, 255, 0.04);
-      --surface-hover: rgba(255, 255, 255, 0.08);
-      --border: rgba(255, 255, 255, 0.1);
-      --accent: #10b981;
-      --accent-hover: #059669;
-      --accent2: #ef4444;
-      --accent2-hover: #b91c1c;
-      --accent3: #3b82f6;
-      --accent3-hover: #2563eb;
-      --accent4: #eab308;
+      /* Fondo base índigo muy profundo */
+      --bg-dark: #07070b;
+      --sidebar-bg: rgba(14, 14, 20, 0.55);
+      --surface: rgba(255, 255, 255, 0.03);
+      --surface-hover: rgba(255, 255, 255, 0.06);
+      --border: rgba(255, 255, 255, 0.08);
+      
+      /* Acentos eléctricos y vibrantes (no genéricos) */
+      --accent: #00e5ff;       /* Cian eléctrico (Up/Success) */
+      --accent-hover: #00b8cc;
+      --accent2: #ff2a6d;      /* Rosa neón / Carmesí (Danger) */
+      --accent2-hover: #cc2257;
+      --accent3: #bd00ff;      /* Violeta profundo (Info/Secondary) */
+      --accent3-hover: #9600cc;
+      --accent4: #ffb800;      /* Amarillo ciber (Warning) */
+      
       --text-main: #f8fafc;
-      --text-muted: #94a3b8;
+      --text-muted: #8b949e;
       --sidebar-width: 280px;
-      --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      --transition: all 0.4s cubic-bezier(0.25, 1, 0.5, 1);
     }
 
     * {
@@ -36,8 +40,11 @@
 
     body {
       background: var(--bg-dark);
-      background-image: radial-gradient(circle at top right, rgba(16, 185, 129, 0.05), transparent 400px),
-        radial-gradient(circle at bottom left, rgba(59, 130, 246, 0.05), transparent 400px);
+      /* Ambient glow mucho más rico y atmosférico */
+      background-image: 
+        radial-gradient(circle at 100% 0%, rgba(189, 0, 255, 0.12), transparent 700px),
+        radial-gradient(circle at 0% 100%, rgba(0, 229, 255, 0.08), transparent 700px),
+        radial-gradient(circle at 50% 50%, rgba(255, 42, 109, 0.03), transparent 800px);
       color: var(--text-main);
       font-family: 'Inter', sans-serif;
       min-height: 100vh;
@@ -76,9 +83,13 @@
     }
 
     .logo-area h1 {
-      font-size: 1.25rem;
-      color: var(--accent);
+      font-size: 1.35rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--accent), var(--accent3));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
       letter-spacing: -0.5px;
+      text-shadow: 0 0 20px rgba(0, 229, 255, 0.4);
     }
 
     .logo-area p {
@@ -137,9 +148,10 @@
     }
 
     .nav-item.active {
-      background: rgba(16, 185, 129, 0.1);
+      background: rgba(0, 229, 255, 0.1);
       color: var(--accent);
-      border-color: rgba(16, 185, 129, 0.2);
+      border-color: rgba(0, 229, 255, 0.25);
+      box-shadow: 0 0 15px rgba(0, 229, 255, 0.05);
     }
 
     /* Layout: Main Content */
@@ -281,23 +293,29 @@
     }
 
     .status-up {
-      background: rgba(16, 185, 129, 0.15);
+      background: rgba(0, 229, 255, 0.12);
       color: var(--accent);
+      border: 1px solid rgba(0, 229, 255, 0.3);
+      box-shadow: 0 0 10px rgba(0, 229, 255, 0.1);
     }
 
     .status-down {
-      background: rgba(239, 68, 68, 0.15);
+      background: rgba(255, 42, 109, 0.12);
       color: var(--accent2);
+      border: 1px solid rgba(255, 42, 109, 0.3);
+      box-shadow: 0 0 10px rgba(255, 42, 109, 0.1);
     }
 
     .status-warn {
-      background: rgba(234, 179, 8, 0.15);
+      background: rgba(255, 184, 0, 0.12);
       color: var(--accent4);
+      border: 1px solid rgba(255, 184, 0, 0.3);
     }
 
     .status-unk {
-      background: rgba(148, 163, 184, 0.15);
+      background: rgba(139, 148, 158, 0.15);
       color: var(--text-muted);
+      border: 1px solid rgba(139, 148, 158, 0.3);
     }
 
     .status-led {
@@ -345,7 +363,7 @@
     input:focus,
     select:focus {
       border-color: var(--accent);
-      box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+      box-shadow: 0 0 0 2px rgba(0, 229, 255, 0.2), 0 0 15px rgba(0, 229, 255, 0.1);
     }
 
     input[type="file"] {
@@ -388,34 +406,39 @@
     .btn-green {
       background: var(--accent);
       color: #000;
+      box-shadow: 0 0 10px rgba(0, 229, 255, 0.3);
     }
 
     .btn-green:hover:not(:disabled) {
       background: var(--accent-hover);
+      box-shadow: 0 0 20px rgba(0, 229, 255, 0.6);
     }
 
     .btn-red {
-      background: rgba(239, 68, 68, 0.15);
+      background: rgba(255, 42, 109, 0.15);
       color: var(--accent2);
-      border: 1px solid rgba(239, 68, 68, 0.3);
+      border: 1px solid rgba(255, 42, 109, 0.4);
     }
 
     .btn-red:hover:not(:disabled) {
       background: var(--accent2);
       color: #fff;
+      box-shadow: 0 0 15px rgba(255, 42, 109, 0.4);
     }
 
     .btn-blue {
       background: var(--accent3);
       color: #fff;
+      box-shadow: 0 0 10px rgba(189, 0, 255, 0.3);
     }
 
     .btn-blue:hover:not(:disabled) {
       background: var(--accent3-hover);
+      box-shadow: 0 0 20px rgba(189, 0, 255, 0.6);
     }
 
     .btn-gray {
-      background: rgba(255, 255, 255, 0.05);
+      background: rgba(255, 255, 255, 0.03);
       color: var(--text-main);
       border: 1px solid var(--border);
     }
