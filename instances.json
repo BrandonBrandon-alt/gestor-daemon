@@ -1,8 +1,14 @@
 [
   {
-    "name": "prueba",
+    "name": "final ",
     "ip": "192.168.10.100",
-    "url": "http://192.168.10.100",
-    "createdAt": "2026-05-04T21:03:01-05:00"
+    "url": "http://final .cloud.local",
+    "createdAt": "2026-05-05T00:52:03-05:00"
+  },
+  {
+    "name": "pruebaFina",
+    "ip": "192.168.10.101",
+    "url": "http://pruebaFina.cloud.local",
+    "createdAt": "2026-05-05T01:07:00-05:00"
   }
 ]
