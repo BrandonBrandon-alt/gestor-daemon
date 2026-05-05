@@ -165,7 +165,27 @@ nslookup plantilla.cloud.local 192.168.10.10
 ssh -i ~/.vagrant.d/insecure_private_key vagrant@192.168.10.50
 ```
 
-### Paso 3: Configurar DNS en el Host
+### Paso 3: Configurar Resolución de Dominio Local (IMPORTANTE)
+
+El daemon ahora soporta dos modos de resolución automática:
+
+#### Opción A: Usando /etc/hosts Dinámico (⭐ Recomendado - Sin dependencias externas)
+
+El daemon puede actualizar automáticamente tu `/etc/hosts` local. Esto funciona incluso cuando cambias de red sin necesidad de un servidor DNS externo.
+
+```bash
+# Ejecutar el script de setup (one-time)
+sudo ./setup-hosts.sh
+
+# Eso es todo. El daemon ahora actualizará /etc/hosts automáticamente.
+```
+
+Cómo funciona:
+- Al desplegar un sitio → se agrega `192.168.x.x    nombre.cloud.local` a `/etc/hosts`
+- Al cambiar de red → la resolución sigue funcionando localmente
+- Al eliminar un sitio → se remueve la línea de `/etc/hosts`
+
+#### Opción B: Usando Servidor DNS Externo (BIND9)
 
 #### Para Linux (systemd-resolved)
 
@@ -200,6 +220,8 @@ EOF
 sudo systemctl restart NetworkManager
 ```
 
+**Nota**: La Opción A (/etc/hosts dinámico) no requiere esta configuración y funciona sin cambios de DNS.
+
 #### Para Windows
 
 1. Abrir **Centro de redes y recursos compartidos**
@@ -207,6 +229,8 @@ sudo systemctl restart NetworkManager
 3. Seleccionar **IPv4** → Propiedades
 4. Usar DNS personalizado: `192.168.10.10`
 5. Aceptar y reiniciar
+
+**Nota**: Si usas Opción A (/etc/hosts dinámico), edita `C:\Windows\System32\drivers\etc\hosts` manualmente O el daemon lo puede hacer si ejecutas con permisos de administrador.
 
 #### Para macOS
 
@@ -489,7 +513,29 @@ sudo apt-get install build-essential
 # Montar CD de Guest Additions desde VirtualBox UI
 ```
 
+### "Server Not Found" al cambiar de red
+
+**Este es el problema principal que hemos resuelto con `/etc/hosts` dinámico:**
+
+```bash
+# Si usas Opción A (/etc/hosts dinámico):
+# ✅ Ya está resuelto automáticamente - el daemon actualiza /etc/hosts
+# y funciona sin depender de configuración de red externa
+
+# Verificar que sudoers está configurado correctamente:
+sudo -l
+# Debe mostrar: NOPASSWD: /usr/bin/tee /etc/hosts
+
+# Limpiar caché DNS del navegador:
+# Chrome/Edge: Ctrl+Shift+Delete → Cookies y datos de sitios → Limpiar ahora
+# Firefox: about:preferences → Privacy → Limpiar datos
+
+# Si sigue sin funcionar, reinicia el navegador completamente
+```
+
 ### "DNS no resuelve cloud.local"
+
+**Si usas Opción B (servidor DNS externo):**
 
 ```bash
 # Verificar servidor DNS
