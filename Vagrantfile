@@ -112,7 +112,7 @@ EOF
       named-checkzone #{DNS_ZONE} /var/lib/bind/db.#{DNS_ZONE}
 
       echo ">>> [ns] Iniciando BIND9..."
-      systemctl enable --now named
+      systemctl restart named
 
       echo ">>> [ns] Verificando resolución DNS..."
       sleep 2
