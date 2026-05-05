@@ -10,6 +10,7 @@ import (
 "io"
 "net/http"
 "os"
+"os/exec"
 "path/filepath"
 "strings"
 "sync"
@@ -364,6 +365,13 @@ if err != nil {
 fmt.Println("Advertencia DNS:", err)
 }
 
+// 10b. Update local /etc/hosts
+sendProgress(79, "Actualizando resolución de hosts local...")
+err = updateHosts(nombre, nuevaIP, true)
+if err != nil {
+fmt.Println("Advertencia /etc/hosts:", err)
+}
+
 // 11. Upload ZIP via SCP through NAT port
 sendProgress(82, "Subiendo archivos del sitio web...")
 	remoteZipPath := "/home/" + sshUser + "/deploy.zip"
@@ -466,7 +474,65 @@ return
 	runVBoxQuiet("unregistervm", vmName, "--delete-all")
 
 	deregisterDNS(nombre)
+	updateHosts(nombre, "", false)
 	saveInstances(newInsts)
 
 jsonOK(w, Response{Success: true, Message: "Instancia eliminada"})
+}
+
+// updateHosts manages /etc/hosts entries for local DNS resolution without external DNS.
+// This allows cloud.local domains to resolve even when network changes or DNS is unavailable.
+// hostname: the hostname without zone (e.g., "myapp")
+// ip: the IPv4 address to associate (empty string when removing)
+// add: true to add/update entry, false to remove
+// Uses sudo to write to /etc/hosts (requires sudoers configuration).
+func updateHosts(hostname, ip string, add bool) error {
+hostsFile := "/etc/hosts"
+domain := hostname + ".cloud.local"
+
+// Read current hosts file
+data, err := os.ReadFile(hostsFile)
+if err != nil {
+return fmt.Errorf("error reading /etc/hosts: %v", err)
+}
+
+lines := strings.Split(string(data), "\n")
+var newLines []string
+
+// Remove existing entry for this domain
+for _, line := range lines {
+trimmed := strings.TrimSpace(line)
+if trimmed == "" {
+newLines = append(newLines, line)
+continue
+}
+// Check if this line contains our domain
+if strings.Contains(line, domain) {
+// found = true
+// Only skip if we're removing, otherwise replace below
+if !add {
+continue
+}
+} else {
+newLines = append(newLines, line)
+}
+}
+
+// Add new entry if requested
+if add {
+newLine := fmt.Sprintf("%s    %s", ip, domain)
+newLines = append(newLines, newLine)
+}
+
+newContent := strings.Join(newLines, "\n")
+
+// Use sudo to write back to /etc/hosts
+cmd := exec.Command("sudo", "tee", hostsFile)
+cmd.Stdin = strings.NewReader(newContent)
+out, err := cmd.CombinedOutput()
+if err != nil {
+return fmt.Errorf("error updating /etc/hosts with sudo: %v, output: %s", err, string(out))
+}
+
+return nil
 }
