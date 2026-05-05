@@ -410,7 +410,7 @@ insts = append(insts, newInstance)
 saveInstances(insts)
 
 // Final event: send the result data
-finalData := fmt.Sprintf(`{"progress":100,"message":"¡Sitio desplegado exitosamente!","done":true,"name":"%s","ip":"%s","url":"http://%s.cloud.local"}`, nombre, nuevaIP, nombre)
+finalData := fmt.Sprintf(`{"progress":100,"message":"¡Sitio desplegado exitosamente!","done":true,"name":"%s","ip":"%s","url":"http://%s.cloud.local","urlIP":"http://%s"}`, nombre, nuevaIP, nombre, nuevaIP)
 fmt.Fprintf(w, "data: %s\n\n", finalData)
 flusher.Flush()
 }

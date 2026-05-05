@@ -1980,7 +1980,12 @@
           <tr>
             <td class="mono">${i.name}</td>
             <td class="mono">${i.ip}</td>
-            <td><a href="${i.url}" target="_blank" style="color:var(--accent)">${i.url}</a></td>
+            <td>
+              <div style="display:flex;flex-direction:column;gap:0.5rem;">
+                <a href="${i.url}" target="_blank" style="color:var(--accent)">${i.url}</a>
+                ${i.ip ? `<a href="http://${i.ip}" target="_blank" style="color:var(--text-muted);font-size:0.9rem;">http://${i.ip}</a>` : ''}
+              </div>
+            </td>
             <td>
               <button class="btn btn-red btn-sm" onclick="deleteInstance('${i.name}')"><span class="icon">delete</span> Eliminar</button>
             </td>
@@ -2061,7 +2066,8 @@
               if (evt.done) {
                 // Success!
                 progressBar.style.boxShadow = '0 0 20px rgba(0,229,255,0.6)';
-                showToast("Aprovisionado", `El sitio ${name} está listo en ${evt.url}`, "success");
+                const urlMsg = evt.urlIP ? `${evt.url} o ${evt.urlIP}` : evt.url;
+                showToast("Aprovisionado", `El sitio ${name} está listo en ${urlMsg}`, "success");
                 form.reset();
                 loadHTTPaaS();
               }
