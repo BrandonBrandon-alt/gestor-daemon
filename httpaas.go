@@ -4,6 +4,7 @@
 package main
 
 import (
+"context"
 "encoding/json"
 "fmt"
 "io"
@@ -14,6 +15,7 @@ import (
 "sync"
 "time"
 
+scp "github.com/bramvdbogaerde/go-scp"
 "golang.org/x/crypto/ssh"
 )
 
@@ -156,6 +158,24 @@ func getPlantillaDiskUUID() (string, error) {
 	}
 }
 
+// getHostOnlyAdapter finds the host-only adapter for the 192.168.10.1 subnet.
+func getHostOnlyAdapter() string {
+	out, err := runVBoxQuiet("list", "hostonlyifs")
+	if err != nil {
+		return "vboxnet1"
+	}
+	lines := strings.Split(out, "\n")
+	currentName := ""
+	for _, line := range lines {
+		if strings.HasPrefix(line, "Name:") {
+			currentName = strings.TrimSpace(strings.TrimPrefix(line, "Name:"))
+		} else if strings.HasPrefix(line, "IPAddress:") && strings.Contains(line, "192.168.10.1") {
+			return currentName
+		}
+	}
+	return "vboxnet1"
+}
+
 // getNextFreeIP allocates the next available IP address from the instance pool.
 // Scans the range 192.168.10.100-200 and returns the first unassigned address.
 // Reads current instances to determine which IPs are in use.
@@ -261,13 +281,13 @@ if err != nil {
 	return
 }
 
-// NIC1: NAT con reenvío de puerto SSH (para configuración inicial)
-// NIC2: Red interna vboxnet0 (para la IP estática final)
-runVBox("modifyvm", vmName, "--memory", "512",
-	"--ioapic", "on",
-	"--nic1", "nat",
-	"--natpf1", fmt.Sprintf("ssh,tcp,127.0.0.1,%s,,22", sshPort),
-	"--nic2", "hostonly", "--hostonlyadapter2", "vboxnet0")
+	// NIC1: NAT con reenvío de puerto SSH (para configuración inicial)
+	// NIC2: Red interna (para la IP estática final)
+	runVBox("modifyvm", vmName, "--memory", "512",
+		"--ioapic", "on",
+		"--nic1", "nat",
+		"--natpf1", fmt.Sprintf("ssh,tcp,127.0.0.1,%s,,22", sshPort),
+		"--nic2", "hostonly", "--hostonlyadapter2", getHostOnlyAdapter())
 
 runVBox("storagectl", vmName, "--name", "SATA", "--add", "sata")
 
@@ -319,13 +339,38 @@ if err != nil {
 fmt.Println("Advertencia DNS:", err)
 }
 
-// 11. Upload ZIP via SCP and deploy to Apache
-remoteZipPath := "/home/" + sshUser + "/" + zipHeader.Filename
-uploadFile(nuevaIP, zipTempPath, remoteZipPath)
-runSSH(nuevaIP, fmt.Sprintf("sudo rm -rf /var/www/html/* && sudo unzip -o %s -d /var/www/html/", remoteZipPath))
-runSSH(nuevaIP, "sudo systemctl restart apache2")
+	// 11. Upload ZIP via SCP through NAT port (host-only IP may not be ready yet)
+	remoteZipPath := "/home/" + sshUser + "/deploy.zip"
+	fmt.Printf("Subiendo ZIP a %s via NAT (127.0.0.1:%s)...\n", vmName, sshPort)
+	scpConfig, _ := buildSSHConfig()
+	scpNATClient := scp.NewClient(fmt.Sprintf("127.0.0.1:%s", sshPort), scpConfig)
+	zipLocalFile, err := os.Open(zipTempPath)
+	if err != nil {
+		jsonError(w, "Error abriendo ZIP local: "+err.Error())
+		return
+	}
+	defer zipLocalFile.Close()
+	if err = scpNATClient.Connect(); err != nil {
+		jsonError(w, "Error conectando SCP via NAT: "+err.Error())
+		return
+	}
+	defer scpNATClient.Close()
+	if err = scpNATClient.CopyFromFile(context.Background(), *zipLocalFile, remoteZipPath, "0644"); err != nil {
+		jsonError(w, "Error subiendo ZIP via SCP: "+err.Error())
+		return
+	}
+	fmt.Println("ZIP subido exitosamente.")
 
-// 12. Save instance metadata
+	// 12. Deploy: unzip and flatten single root directory if needed
+	deployCmd := fmt.Sprintf("sudo rm -rf /var/www/html/* && sudo unzip -o %s -d /var/www/html/", remoteZipPath)
+	deployCmd += ` && sudo bash -c 'cd /var/www/html && COUNT=$(ls -1 | wc -l) && if [ "$COUNT" -eq 1 ]; then DIR=$(ls -1); if [ -d "$DIR" ]; then shopt -s dotglob; mv "$DIR"/* . 2>/dev/null; rmdir "$DIR" 2>/dev/null; fi; fi'`
+	out, err := cloneSSH(deployCmd)
+	if err != nil {
+		fmt.Printf("Advertencia deploy: %v | %s\n", err, out)
+	}
+	cloneSSH("sudo systemctl restart apache2")
+
+// 13. Save instance metadata
 insts, _ := getInstances()
 newInstance := Instance{
 Name:      nombre,
