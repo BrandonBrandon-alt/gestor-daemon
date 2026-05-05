@@ -122,6 +122,11 @@
       }
     }
 
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
     nav {
       display: flex;
       flex-direction: column;
@@ -709,11 +714,21 @@
               <label>Archivo Web (.zip)</label>
               <input type="file" id="site-zip" accept=".zip" required>
             </div>
-            <button type="submit" class="btn btn-green" style="width: 100%; margin-top: 1rem;">
+            <button type="submit" class="btn btn-green" id="provision-btn" style="width: 100%; margin-top: 1rem;">
               <span class="icon">cloud_upload</span> Desplegar Sitio
             </button>
           </form>
-          <div id="provision-console" class="output-console" style="display:none; margin-top:1rem;"></div>
+          <!-- Progress Bar -->
+          <div id="provision-progress" style="display:none; margin-top:1.2rem;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
+              <span id="progress-label" style="font-size:0.8rem; color:var(--text-muted); font-family:'Space Mono',monospace;">Iniciando...</span>
+              <span id="progress-pct" style="font-size:0.85rem; font-weight:600; color:var(--accent); font-family:'Space Mono',monospace;">0%</span>
+            </div>
+            <div style="width:100%; height:8px; background:rgba(255,255,255,0.06); border-radius:6px; overflow:hidden; border:1px solid var(--border);">
+              <div id="progress-bar" style="height:100%; width:0%; background:linear-gradient(90deg, var(--accent), var(--accent3)); border-radius:6px; transition:width 0.4s cubic-bezier(0.25,1,0.5,1); box-shadow:0 0 12px rgba(0,229,255,0.4);"></div>
+            </div>
+            <div id="progress-log" class="output-console" style="margin-top:0.8rem; max-height:180px;"></div>
+          </div>
         </div>
 
         <div class="card">
@@ -1979,8 +1994,12 @@
     async function provisionarInstancia(e) {
       e.preventDefault();
       const form = e.target;
-      const btn = form.querySelector('button');
-      const out = document.getElementById('provision-console');
+      const btn = document.getElementById('provision-btn');
+      const progressDiv = document.getElementById('provision-progress');
+      const progressBar = document.getElementById('progress-bar');
+      const progressLabel = document.getElementById('progress-label');
+      const progressPct = document.getElementById('progress-pct');
+      const progressLog = document.getElementById('progress-log');
       const name = document.getElementById('site-name').value;
       const file = document.getElementById('site-zip').files[0];
 
@@ -1990,26 +2009,70 @@
       fd.append('nombre', name);
       fd.append('zip', file);
 
+      // Reset and show progress
       btn.disabled = true;
-      btn.innerHTML = '<span class="icon">sync</span> Desplegando... (tomará ~1 min)';
-      out.style.display = 'block';
-      out.textContent = `[HTTPaaS] Iniciando aprovisionamiento para '${name}'...\n`;
+      btn.innerHTML = '<span class="icon" style="animation:spin 1s linear infinite">sync</span> Desplegando...';
+      progressDiv.style.display = 'block';
+      progressBar.style.width = '0%';
+      progressBar.style.background = 'linear-gradient(90deg, var(--accent), var(--accent3))';
+      progressLabel.textContent = 'Preparando despliegue...';
+      progressPct.textContent = '0%';
+      progressLog.textContent = `[${new Date().toLocaleTimeString()}] Iniciando aprovisionamiento para '${name}'...\n`;
 
       try {
         const res = await fetch('/api/provision', { method: 'POST', body: fd });
-        const data = await res.json();
-        
-        if (res.ok) {
-          out.textContent += `[Exito] Instancia desplegada en ${data.ip}\nURL: ${data.url}\n`;
-          showToast("Aprovisionado", `El sitio ${name} está listo.`, "success");
-          form.reset();
-          loadHTTPaaS();
-        } else {
-          out.textContent += `[Error] ${data.message}\n`;
-          showToast("Fallo", data.message, "error");
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop(); // Keep incomplete line in buffer
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const evt = JSON.parse(line.slice(6));
+              const pct = evt.progress;
+              const msg = evt.message;
+
+              if (pct === -1) {
+                // Error event
+                progressBar.style.background = 'linear-gradient(90deg, var(--accent2), #ff6090)';
+                progressBar.style.width = '100%';
+                progressLabel.textContent = msg;
+                progressPct.textContent = '✗ Error';
+                progressPct.style.color = 'var(--accent2)';
+                progressLog.textContent += `[ERROR] ${msg}\n`;
+                showToast("Fallo", msg, "error");
+              } else {
+                progressBar.style.width = pct + '%';
+                progressLabel.textContent = msg;
+                progressPct.textContent = pct + '%';
+                progressPct.style.color = 'var(--accent)';
+                progressLog.textContent += `[${pct}%] ${msg}\n`;
+                progressLog.scrollTop = progressLog.scrollHeight;
+              }
+
+              if (evt.done) {
+                // Success!
+                progressBar.style.boxShadow = '0 0 20px rgba(0,229,255,0.6)';
+                showToast("Aprovisionado", `El sitio ${name} está listo en ${evt.url}`, "success");
+                form.reset();
+                loadHTTPaaS();
+              }
+            } catch (parseErr) { /* ignore non-JSON lines */ }
+          }
         }
       } catch (err) {
-        out.textContent += `[Error Local] ${err.message}\n`;
+        progressBar.style.background = 'linear-gradient(90deg, var(--accent2), #ff6090)';
+        progressBar.style.width = '100%';
+        progressLabel.textContent = 'Error de red: ' + err.message;
+        progressPct.textContent = '✗';
         showToast("Fallo", "Error de red al aprovisionar", "error");
       } finally {
         btn.disabled = false;

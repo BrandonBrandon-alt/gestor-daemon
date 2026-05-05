@@ -247,42 +247,62 @@ io.Copy(zf, zipFile)
 zf.Close()
 defer os.Remove(zipTempPath)
 
+// === SSE Setup: stream progress to the browser ===
+flusher, ok := w.(http.Flusher)
+if !ok {
+jsonError(w, "Streaming no soportado")
+return
+}
+w.Header().Set("Content-Type", "text/event-stream")
+w.Header().Set("Cache-Control", "no-cache")
+w.Header().Set("Connection", "keep-alive")
+
+sendProgress := func(pct int, msg string) {
+	data := fmt.Sprintf(`{"progress":%d,"message":"%s"}`, pct, msg)
+	fmt.Fprintf(w, "data: %s\n\n", data)
+	flusher.Flush()
+	fmt.Printf("[Provision %s] %d%% — %s\n", nombre, pct, msg)
+}
+
+sendProgress(5, "Validación completada, asignando recursos...")
+
 // 2. Allocate next available IP address
 nuevaIP, err := getNextFreeIP()
 if err != nil {
-jsonError(w, err.Error())
+sendProgress(-1, "Error: "+err.Error())
 return
 }
+sendProgress(10, fmt.Sprintf("IP asignada: %s", nuevaIP))
 
 // 3. Locate template disk
 plantillaDiskUUID, err := getPlantillaDiskUUID()
 if err != nil {
-jsonError(w, err.Error())
+sendProgress(-1, "Error localizando disco plantilla: "+err.Error())
 return
 }
+sendProgress(15, "Disco plantilla localizado")
 
-// 4. Preparar carpeta de la VM (para logs y config)
+// 4. Preparar carpeta de la VM
 vmName := "web-" + nombre
 vboxFolder := getVBoxDefaultFolder()
 vmFolder := filepath.Join(vboxFolder, vmName)
 os.MkdirAll(vmFolder, 0755)
 
-// 5. Calcular puerto SSH único (base 2300 + offset del último octeto de la IP)
+// 5. Calcular puerto SSH único
 ipParts := strings.Split(nuevaIP, ".")
 ipOffset := 0
 fmt.Sscanf(ipParts[3], "%d", &ipOffset)
 sshPort := fmt.Sprintf("%d", 2300+ipOffset)
 
+sendProgress(20, "Creando máquina virtual...")
+
 // 6. Crear VM con red dual
-fmt.Printf("Creando VM %s usando disco base (multiattach)...\n", vmName)
 _, err = runVBox("createvm", "--name", vmName, "--ostype", "Debian_64", "--register")
 if err != nil {
-	jsonError(w, "Error creando VM: "+err.Error())
+	sendProgress(-1, "Error creando VM: "+err.Error())
 	return
 }
 
-	// NIC1: NAT con reenvío de puerto SSH (para configuración inicial)
-	// NIC2: Red interna (para la IP estática final)
 	runVBox("modifyvm", vmName, "--memory", "512",
 		"--ioapic", "on",
 		"--nic1", "nat",
@@ -290,23 +310,27 @@ if err != nil {
 		"--nic2", "hostonly", "--hostonlyadapter2", getHostOnlyAdapter())
 
 runVBox("storagectl", vmName, "--name", "SATA", "--add", "sata")
+sendProgress(30, "Adjuntando disco base (multiattach)...")
 
-// Adjuntar el disco de la plantilla directamente en modo multiattach
-// Esto crea automáticamente un disco de diferenciación para la nueva VM
 _, err = runVBox("storageattach", vmName, "--storagectl", "SATA", "--port", "0", "--device", "0",
 	"--type", "hdd", "--medium", plantillaDiskUUID, "--mtype", "multiattach")
 if err != nil {
-	jsonError(w, "Error al adjuntar disco base: "+err.Error())
+	sendProgress(-1, "Error al adjuntar disco: "+err.Error())
 	return
 }
 
-// 7. Boot the VM
+sendProgress(35, "Iniciando VM en modo headless...")
 runVBox("startvm", vmName, "--type", "headless")
 
-fmt.Printf("Esperando que %s bootee (45s)...\n", vmName)
-time.Sleep(45 * time.Second)
+// 7. Wait for boot with progress updates
+sendProgress(40, "Esperando arranque del sistema (45s)...")
+for i := 1; i <= 9; i++ {
+	time.Sleep(5 * time.Second)
+	pct := 40 + (i * 3) // 43, 46, 49, 52, 55, 58, 61, 64, 67
+	sendProgress(pct, fmt.Sprintf("Arrancando sistema... %ds/45s", i*5))
+}
 
-// 8. SSH lambda for NAT port access during early boot
+// 8. SSH lambda for NAT port access
 cloneSSH := func(cmd string) (string, error) {
 config, _ := buildSSHConfig()
 client, err := ssh.Dial("tcp", fmt.Sprintf("127.0.0.1:%s", sshPort), config)
@@ -323,8 +347,8 @@ out, err := session.CombinedOutput(cmd)
 return string(out), err
 }
 
-// 9. Configure static IP on vboxnet0 interface
-fmt.Printf("Configurando IP %s en %s...\n", nuevaIP, vmName)
+// 9. Configure static IP
+sendProgress(70, fmt.Sprintf("Configurando IP estática %s...", nuevaIP))
 ifaceContent := fmt.Sprintf("#VAGRANT-BEGIN\nauto eth1\niface eth1 inet static\n      address %s\n      netmask 255.255.255.0\n#VAGRANT-END\n", nuevaIP)
 cloneSSH(fmt.Sprintf(`sudo bash -c "printf '%s' > /etc/network/interfaces.d/eth1-static"`, ifaceContent))
 cloneSSH("sudo hostnamectl set-hostname " + nombre)
@@ -334,43 +358,47 @@ cloneSSH(fmt.Sprintf("sudo ip addr add %s/24 dev eth1 && sudo ip link set eth1 u
 time.Sleep(2 * time.Second)
 
 // 10. Register in BIND9 DNS
+sendProgress(78, "Registrando en servidor DNS...")
 err = registerDNS(nombre, nuevaIP)
 if err != nil {
 fmt.Println("Advertencia DNS:", err)
 }
 
-	// 11. Upload ZIP via SCP through NAT port (host-only IP may not be ready yet)
+// 11. Upload ZIP via SCP through NAT port
+sendProgress(82, "Subiendo archivos del sitio web...")
 	remoteZipPath := "/home/" + sshUser + "/deploy.zip"
-	fmt.Printf("Subiendo ZIP a %s via NAT (127.0.0.1:%s)...\n", vmName, sshPort)
 	scpConfig, _ := buildSSHConfig()
 	scpNATClient := scp.NewClient(fmt.Sprintf("127.0.0.1:%s", sshPort), scpConfig)
 	zipLocalFile, err := os.Open(zipTempPath)
 	if err != nil {
-		jsonError(w, "Error abriendo ZIP local: "+err.Error())
+		sendProgress(-1, "Error abriendo ZIP: "+err.Error())
 		return
 	}
 	defer zipLocalFile.Close()
 	if err = scpNATClient.Connect(); err != nil {
-		jsonError(w, "Error conectando SCP via NAT: "+err.Error())
+		sendProgress(-1, "Error conectando SCP: "+err.Error())
 		return
 	}
 	defer scpNATClient.Close()
 	if err = scpNATClient.CopyFromFile(context.Background(), *zipLocalFile, remoteZipPath, "0644"); err != nil {
-		jsonError(w, "Error subiendo ZIP via SCP: "+err.Error())
+		sendProgress(-1, "Error subiendo ZIP: "+err.Error())
 		return
 	}
-	fmt.Println("ZIP subido exitosamente.")
 
-	// 12. Deploy: unzip and flatten single root directory if needed
+// 12. Deploy: unzip and flatten
+sendProgress(88, "Descomprimiendo y desplegando sitio...")
 	deployCmd := fmt.Sprintf("sudo rm -rf /var/www/html/* && sudo unzip -o %s -d /var/www/html/", remoteZipPath)
 	deployCmd += ` && sudo bash -c 'cd /var/www/html && COUNT=$(ls -1 | wc -l) && if [ "$COUNT" -eq 1 ]; then DIR=$(ls -1); if [ -d "$DIR" ]; then shopt -s dotglob; mv "$DIR"/* . 2>/dev/null; rmdir "$DIR" 2>/dev/null; fi; fi'`
 	out, err := cloneSSH(deployCmd)
 	if err != nil {
 		fmt.Printf("Advertencia deploy: %v | %s\n", err, out)
 	}
+
+sendProgress(93, "Reiniciando Apache...")
 	cloneSSH("sudo systemctl restart apache2")
 
 // 13. Save instance metadata
+sendProgress(97, "Guardando metadatos de instancia...")
 insts, _ := getInstances()
 newInstance := Instance{
 Name:      nombre,
@@ -381,7 +409,10 @@ CreatedAt: time.Now().Format(time.RFC3339),
 insts = append(insts, newInstance)
 saveInstances(insts)
 
-jsonOK(w, newInstance)
+// Final event: send the result data
+finalData := fmt.Sprintf(`{"progress":100,"message":"¡Sitio desplegado exitosamente!","done":true,"name":"%s","ip":"%s","url":"http://%s.cloud.local"}`, nombre, nuevaIP, nombre)
+fmt.Fprintf(w, "data: %s\n\n", finalData)
+flusher.Flush()
 }
 
 // handleInstances processes HTTP GET requests to list all provisioned instances.
