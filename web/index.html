@@ -11,23 +11,27 @@
 
     :root {
       /* Fondo base índigo muy profundo */
-      --bg-dark: #07070b;
-      --sidebar-bg: rgba(14, 14, 20, 0.55);
-      --surface: rgba(255, 255, 255, 0.03);
-      --surface-hover: rgba(255, 255, 255, 0.06);
-      --border: rgba(255, 255, 255, 0.08);
-      
+      --bg-dark: #1f1f1f;
+      --sidebar-bg: #1f1f1f;
+      --surface: #1f1f1f;
+      --surface-hover: #1f1f1f;
+      --border: #1f1f1f;
+
       /* Acentos eléctricos y vibrantes (no genéricos) */
-      --accent: #00e5ff;       /* Cian eléctrico (Up/Success) */
-      --accent-hover: #00b8cc;
-      --accent2: #ff2a6d;      /* Rosa neón / Carmesí (Danger) */
+      --accent: #d1cfc0;
+      /* Cian eléctrico (Up/Success) */
+      --accent-hover: #f76f53;
+      --accent2: #ff2a6d;
+      /* Rosa neón / Carmesí (Danger) */
       --accent2-hover: #cc2257;
-      --accent3: #bd00ff;      /* Violeta profundo (Info/Secondary) */
+      --accent3: #d1cfc0;
+      /* Violeta profundo (Info/Secondary) */
       --accent3-hover: #9600cc;
-      --accent4: #ffb800;      /* Amarillo ciber (Warning) */
-      
+      --accent4: #ffb800;
+      /* Amarillo ciber (Warning) */
+
       --text-main: #f8fafc;
-      --text-muted: #8b949e;
+      --text-muted: #d1cfc0;
       --sidebar-width: 280px;
       --transition: all 0.4s cubic-bezier(0.25, 1, 0.5, 1);
     }
@@ -41,11 +45,7 @@
     body {
       background: var(--bg-dark);
       /* Ambient glow mucho más rico y atmosférico */
-      background-image: 
-        radial-gradient(circle at 100% 0%, rgba(189, 0, 255, 0.12), transparent 700px),
-        radial-gradient(circle at 0% 100%, rgba(0, 229, 255, 0.08), transparent 700px),
-        radial-gradient(circle at 50% 50%, rgba(255, 42, 109, 0.03), transparent 800px);
-      color: var(--text-main);
+      color: var(--bg-dark);
       font-family: 'Inter', sans-serif;
       min-height: 100vh;
       display: flex;
@@ -85,11 +85,9 @@
     .logo-area h1 {
       font-size: 1.35rem;
       font-weight: 700;
-      background: linear-gradient(135deg, var(--accent), var(--accent3));
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
+      color: var(--accent-hover);
       letter-spacing: -0.5px;
-      text-shadow: 0 0 20px rgba(0, 229, 255, 0.4);
+      text-shadow: #d1cfc0;
     }
 
     .logo-area p {
@@ -123,8 +121,13 @@
     }
 
     @keyframes spin {
-      from { transform: rotate(0deg); }
-      to { transform: rotate(360deg); }
+      from {
+        transform: rotate(0deg);
+      }
+
+      to {
+        transform: rotate(360deg);
+      }
     }
 
     nav {
@@ -153,10 +156,10 @@
     }
 
     .nav-item.active {
-      background: rgba(0, 229, 255, 0.1);
+      background: var(--accent-hover);
       color: var(--accent);
-      border-color: rgba(0, 229, 255, 0.25);
-      box-shadow: 0 0 15px rgba(0, 229, 255, 0.05);
+      border-color: #f76f53;
+      box-shadow: #f76f53;
     }
 
     /* Layout: Main Content */
@@ -197,7 +200,8 @@
     .view-header h2 {
       font-size: 1.5rem;
       font-weight: 600;
-      color: var(--text-main);
+      font-family: sans-serif;
+      color: var(--accent-hover);
       margin-bottom: 0.4rem;
     }
 
@@ -433,17 +437,17 @@
 
     .btn-blue {
       background: var(--accent3);
-      color: #fff;
-      box-shadow: 0 0 10px rgba(189, 0, 255, 0.3);
+      color: var(--bg-dark);
+      box-shadow: 0 0 10px var(--accent3);
     }
 
     .btn-blue:hover:not(:disabled) {
       background: var(--accent3-hover);
-      box-shadow: 0 0 20px rgba(189, 0, 255, 0.6);
+      box-shadow: 0 0 20px var(--accent3-hover);
     }
 
     .btn-gray {
-      background: rgba(255, 255, 255, 0.03);
+      background: var(--surface);
       color: var(--text-main);
       border: 1px solid var(--border);
     }
@@ -704,7 +708,7 @@
 
       <div class="grid-2">
         <div class="card">
-          <h3><span>//</span> Solicitar Nueva Instancia</h3>
+          <h3><span></span> Solicitar Nueva Instancia</h3>
           <form id="provision-form" onsubmit="provisionarInstancia(event)">
             <div class="form-group">
               <label>Nombre del Sitio (ej. miprojeto)</label>
@@ -721,18 +725,23 @@
           <!-- Progress Bar -->
           <div id="provision-progress" style="display:none; margin-top:1.2rem;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
-              <span id="progress-label" style="font-size:0.8rem; color:var(--text-muted); font-family:'Space Mono',monospace;">Iniciando...</span>
-              <span id="progress-pct" style="font-size:0.85rem; font-weight:600; color:var(--accent); font-family:'Space Mono',monospace;">0%</span>
+              <span id="progress-label"
+                style="font-size:0.8rem; color:var(--text-muted); font-family:'Space Mono',monospace;">Iniciando...</span>
+              <span id="progress-pct"
+                style="font-size:0.85rem; font-weight:600; color:var(--accent); font-family:'Space Mono',monospace;">0%</span>
             </div>
-            <div style="width:100%; height:8px; background:rgba(255,255,255,0.06); border-radius:6px; overflow:hidden; border:1px solid var(--border);">
-              <div id="progress-bar" style="height:100%; width:0%; background:linear-gradient(90deg, var(--accent), var(--accent3)); border-radius:6px; transition:width 0.4s cubic-bezier(0.25,1,0.5,1); box-shadow:0 0 12px rgba(0,229,255,0.4);"></div>
+            <div
+              style="width:100%; height:8px; background:rgba(255,255,255,0.06); border-radius:6px; overflow:hidden; border:1px solid var(--border);">
+              <div id="progress-bar"
+                style="height:100%; width:0%; background:linear-gradient(90deg, var(--accent), var(--accent3)); border-radius:6px; transition:width 0.4s cubic-bezier(0.25,1,0.5,1); box-shadow:0 0 12px rgba(0,229,255,0.4);">
+              </div>
             </div>
             <div id="progress-log" class="output-console" style="margin-top:0.8rem; max-height:180px;"></div>
           </div>
         </div>
 
         <div class="card">
-          <h3><span>//</span> Instancias Activas</h3>
+          <h3><span></span> Instancias Activas</h3>
           <div class="table-container">
             <table>
               <thead>
@@ -745,7 +754,8 @@
               </thead>
               <tbody id="httpaas-table">
                 <tr>
-                  <td colspan="4" style="color:var(--text-muted);text-align:center;padding:2rem;">Cargando instancias...</td>
+                  <td colspan="4" style="color:var(--text-muted);text-align:center;padding:2rem;">Cargando instancias...
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -766,7 +776,7 @@
       <div class="grid-1">
         <!-- Hijas -->
         <div class="card">
-          <h3><span>//</span> Nodos Web (Máquinas Hijas)</h3>
+          <h3><span></span> Nodos Web (Máquinas Hijas)</h3>
           <div class="table-container">
             <table>
               <thead>
@@ -790,7 +800,7 @@
       <div class="grid-2">
         <!-- HAProxy LBs -->
         <div class="card">
-          <h3><span>//</span> Balanceadores (HAProxy)</h3>
+          <h3><span></span> Balanceadores (HAProxy)</h3>
           <!-- Formulario de registro manual de LB -->
           <div style="display:flex; gap:0.6rem; margin-bottom:1rem; align-items:flex-end;">
             <div style="flex:1">
@@ -825,7 +835,7 @@
 
         <!-- Crudas -->
         <div class="card">
-          <h3><span>//</span> Máquinas Base (Raw VBox)</h3>
+          <h3><span></span> Máquinas Base (Raw VBox)</h3>
           <div class="table-container">
             <table>
               <thead>
@@ -857,7 +867,7 @@
 
       <div class="grid-1">
         <div class="card">
-          <h3><span>//</span> Inventario de Discos Multiconexión</h3>
+          <h3><span></span> Inventario de Discos Multiconexión</h3>
           <div class="table-container">
             <table>
               <thead>
@@ -880,7 +890,7 @@
 
       <div class="grid-1">
         <div class="card">
-          <h3><span>//</span> Generador de Plantilla</h3>
+          <h3><span></span> Generador de Plantilla</h3>
           <form id="prepare-vm-form" onsubmit="prepararVM(event)">
             <div class="grid-2" style="margin-bottom:0">
               <div class="form-group">
@@ -926,7 +936,7 @@
 
       <div class="grid-2">
         <div class="card" style="border: 1px solid rgba(16, 185, 129, 0.3)">
-          <h3><span>//</span> Desplegar Nodo de Aplicación (Hija)</h3>
+          <h3><span></span> Desplegar Nodo de Aplicación (Hija)</h3>
           <div class="form-group">
             <label>Nombre de Instancia (Identificador VM)</label>
             <input type="text" id="new-vm-name" placeholder="ej. Prod-Nodo-01">
@@ -949,7 +959,7 @@
         </div>
 
         <div class="card" style="border: 1px solid rgba(59, 130, 246, 0.3)">
-          <h3><span>//</span> Desplegar Balanceador HAProxy</h3>
+          <h3><span></span> Desplegar Balanceador HAProxy</h3>
           <div class="form-group">
             <label>Nombre de Instancia (Identificador LB)</label>
             <input type="text" id="new-lb-vm-name" placeholder="ej. LB-Frontera-A">
@@ -985,7 +995,7 @@
       <div class="grid-2">
         <!-- HAProxy Rules -->
         <div class="card">
-          <h3><span>//</span> Inyección de Tráfico HAProxy</h3>
+          <h3><span></span> Inyección de Tráfico HAProxy</h3>
 
           <div class="form-group">
             <label>1. Capa L7 - Balanceador Objetivo</label>
@@ -1035,7 +1045,7 @@
 
         <!-- systemctl -->
         <div class="card">
-          <h3><span>//</span> Terminal: systemctl remote</h3>
+          <h3><span></span> Terminal: systemctl remote</h3>
 
           <div class="grid-2" style="margin-bottom:0.5rem">
             <div class="form-group">
@@ -1060,13 +1070,16 @@
               <button class="btn btn-blue btn-sm" onclick="serviceAction('install-stress')"><span
                   class="icon">download</span> Instalar stress-ng (Ubuntu/Debian)</button>
             </div>
-            <div style="width: 100%; margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid var(--border); display: flex; gap: 0.5rem;">
-              <input type="text" id="free-cmd" placeholder="Comando libre (ej. stress-ng --cpu 1 -l 90)" style="flex:1;">
-              <button class="btn btn-green btn-sm" onclick="freeCommand()"><span class="icon">terminal</span> Ejecutar</button>
+            <div
+              style="width: 100%; margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid var(--border); display: flex; gap: 0.5rem;">
+              <input type="text" id="free-cmd" placeholder="Comando libre (ej. stress-ng --cpu 1 -l 90)"
+                style="flex:1;">
+              <button class="btn btn-green btn-sm" onclick="freeCommand()"><span class="icon">terminal</span>
+                Ejecutar</button>
             </div>
           </div>
 
-          <div class="output-console" id="service-output" style="min-height: 120px; display:block">// Listo para
+          <div class="output-console" id="service-output" style="min-height: 120px; display:block"> Listo para
             ejecutar comandos SSH...</div>
         </div>
       </div>
@@ -1084,7 +1097,7 @@
 
       <div class="grid-2">
         <div class="card">
-          <h3><span>//</span> Parámetros de Auto-Escalado</h3>
+          <h3><span></span> Parámetros de Auto-Escalado</h3>
           <div class="form-group"
             style="margin-bottom: 2rem; border-bottom: 1px solid var(--border); padding-bottom: 1rem;">
             <label>Estado del Motor</label>
@@ -1145,7 +1158,7 @@
         </div>
 
         <div class="card">
-          <h3><span>//</span> Monitoreo en Tiempo Real</h3>
+          <h3><span></span> Monitoreo en Tiempo Real</h3>
           <div
             style="font-size: 2.5rem; text-align:center; padding: 2rem 0; font-family: 'Space Mono', monospace; font-weight: bold;">
             <span id="as-avg-cpu">0.0</span> <span
@@ -1183,7 +1196,7 @@
             </div>
           </div>
 
-          <h3 style="margin-top: 2rem;"><span>//</span> Registro de Eventos</h3>
+          <h3 style="margin-top: 2rem;"><span></span> Registro de Eventos</h3>
           <div id="as-logs" class="output-console" style="max-height: 200px; display:block">Cargando eventos...</div>
         </div>
       </div>
