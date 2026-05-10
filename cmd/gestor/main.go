@@ -840,6 +840,7 @@ func main() {
 	http.HandleFunc("/api/instances/", httpaas.HandleDeleteInstance)
 
 	fmt.Println("Gestor de demonios corriendo en http://localhost:8090")
+	httpaas.SyncAllHosts()
 	go displayVMStatusTable()
 	go autoscaler.StartAutoscaler()
 	log.Fatal(http.ListenAndServe(":8090", nil))

@@ -364,12 +364,19 @@ cloneSSH(fmt.Sprintf("sudo ip addr add %s/24 dev eth1 && sudo ip link set eth1 u
 
 time.Sleep(2 * time.Second)
 
-// 10. Register in BIND9 DNS
-sendProgress(78, "Registrando en servidor DNS...")
-err = dns.RegisterDNS(nombre, nuevaIP)
-if err != nil {
-fmt.Println("Advertencia DNS:", err)
-}
+	// 10. Register in BIND9 DNS
+	sendProgress(78, "Registrando en servidor DNS...")
+	err = dns.RegisterDNS(nombre, nuevaIP)
+	if err != nil {
+		fmt.Println("Advertencia DNS:", err)
+	}
+
+	// 10a. Update Local /etc/hosts (Option A)
+	sendProgress(78, "Actualizando resolución local en el host...")
+	err = dns.UpdateLocalHosts(nombre, nuevaIP)
+	if err != nil {
+		fmt.Println("Advertencia /etc/hosts local:", err)
+	}
 
 	// 10b. Update guest /etc/hosts via SSH
 	sendProgress(79, "Actualizando resolución de hosts local en la VM...")
@@ -399,13 +406,49 @@ sendProgress(82, "Subiendo archivos del sitio web...")
 		return
 	}
 
-// 12. Deploy: unzip and flatten
-sendProgress(88, "Descomprimiendo y desplegando sitio...")
-	deployCmd := fmt.Sprintf("sudo rm -rf /var/www/html/* && sudo unzip -o %s -d /var/www/html/", remoteZipPath)
-	deployCmd += ` && sudo bash -c 'cd /var/www/html && COUNT=$(ls -1 | wc -l) && if [ "$COUNT" -eq 1 ]; then DIR=$(ls -1); if [ -d "$DIR" ]; then shopt -s dotglob; mv "$DIR"/* . 2>/dev/null; rmdir "$DIR" 2>/dev/null; fi; fi'`
-	out, err := cloneSSH(deployCmd)
+// 12. Deploy: unzip, recursive flatten and fix permissions
+sendProgress(88, "Descomprimiendo y normalizando estructura...")
+	deployScript := fmt.Sprintf(`
+		set -e
+		sudo rm -rf /var/www/html/*
+		sudo unzip -o %s -d /var/www/html/
+		cd /var/www/html
+		
+		# Aplanamiento recursivo: mientras solo haya una carpeta, entrar en ella
+		while [ $(ls -1A | wc -l) -eq 1 ] && [ -d "$(ls -1A)" ]; do
+			DIR=$(ls -1A)
+			echo "Aplanando carpeta: $DIR"
+			sudo shopt -s dotglob
+			sudo mv "$DIR"/* .
+			sudo rmdir "$DIR"
+		done
+		
+		# Asegurar que no haya un index.html ausente si hay otros html
+		if [ ! -f index.html ] && [ $(ls -1 *.html 2>/dev/null | wc -l) -eq 1 ]; then
+			SINGLE_HTML=$(ls -1 *.html)
+			echo "No hay index.html, vinculando $SINGLE_HTML como principal"
+			sudo ln -s "$SINGLE_HTML" index.html
+		fi
+		
+		# Ajustar ServerName en Apache para evitar conflictos de VirtualHost
+		if [ -f /etc/apache2/sites-available/plantilla.conf ]; then
+			sudo sed -i "s/ServerName .*/ServerName %s.%s/" /etc/apache2/sites-available/plantilla.conf
+			sudo a2ensite plantilla.conf > /dev/null 2>&1
+		fi
+		
+		# Corregir permisos para Apache
+		sudo chown -R www-data:www-data /var/www/html
+		sudo find /var/www/html -type d -exec chmod 755 {} +
+		sudo find /var/www/html -type f -exec chmod 644 {} +
+		
+		# Limpiar el zip subido
+		rm -f %s
+	`, remoteZipPath, nombre, config.Global.DNSZone, remoteZipPath)
+
+	out, err := cloneSSH(deployScript)
 	if err != nil {
-		fmt.Printf("Advertencia deploy: %v | %s\n", err, out)
+		sendProgress(-1, fmt.Sprintf("Error en despliegue: %v (Salida: %s)", err, out))
+		return
 	}
 
 sendProgress(93, "Reiniciando Apache...")
@@ -480,6 +523,7 @@ return
 	virtualbox.RunVBoxQuiet("unregistervm", vmName, "--delete-all")
 
 	dns.DeregisterDNS(nombre)
+	dns.RemoveLocalHosts(nombre)
 	
 	// Remove from guest VM's /etc/hosts via SSH if we still could, but since the VM is off/deleted, no need.
 	saveInstances(newInsts)
@@ -526,4 +570,19 @@ func HandleProxy(w http.ResponseWriter, r *http.Request) {
 	// Serve
 	proxy.ServeHTTP(w, r)
 }
+// SyncAllHosts synchronizes all saved instances with the local /etc/hosts file.
+func SyncAllHosts() {
+	insts, err := getInstances()
+	if err != nil {
+		fmt.Println("Error al obtener instancias para sincronización de hosts:", err)
+		return
+	}
 
+	fmt.Printf("🔄 Sincronizando %d instancias con /etc/hosts...\n", len(insts))
+	for _, inst := range insts {
+		err := dns.UpdateLocalHosts(inst.Name, inst.IP)
+		if err != nil {
+			fmt.Printf("⚠️ Error sincronizando %s: %v\n", inst.Name, err)
+		}
+	}
+}
