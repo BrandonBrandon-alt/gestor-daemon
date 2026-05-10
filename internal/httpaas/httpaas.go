@@ -409,41 +409,44 @@ sendProgress(82, "Subiendo archivos del sitio web...")
 // 12. Deploy: unzip, recursive flatten and fix permissions
 sendProgress(88, "Descomprimiendo y normalizando estructura...")
 	deployScript := fmt.Sprintf(`
-		set -e
-		sudo rm -rf /var/www/html/*
-		sudo unzip -o %s -d /var/www/html/
-		cd /var/www/html
+		# 1. Configuración de Identidad (Orden Correcto: Hosts antes que Hostname)
+		echo "127.0.1.1 %s" | sudo tee -a /etc/hosts > /dev/null
+		sudo hostnamectl set-hostname "%s"
 		
-		# Aplanamiento recursivo: mientras solo haya una carpeta, entrar en ella
-		while [ $(ls -1A | wc -l) -eq 1 ] && [ -d "$(ls -1A)" ]; do
-			DIR=$(ls -1A)
-			echo "Aplanando carpeta: $DIR"
-			sudo shopt -s dotglob
-			sudo mv "$DIR"/* .
-			sudo rmdir "$DIR"
-		done
+		# 2. Bloque de despliegue principal
+		sudo bash -c '
+			# Limpieza
+			rm -rf /var/www/html/*
+			unzip -o %s -d /var/www/html/ > /dev/null
+			
+			cd /var/www/html
+			
+			# 3. Aplanamiento inteligente
+			if [ $(ls -1A | wc -l) -eq 1 ] && [ -d "$(ls -1A)" ]; then
+				DIR=$(ls -1A)
+				mv "$DIR"/* . 2>/dev/null
+				rmdir "$DIR" 2>/dev/null
+			fi
+			
+			# 4. Asegurar index
+			if [ ! -f index.html ]; then
+				SINGLE_HTML=$(ls -1 *.html 2>/dev/null | head -n 1)
+				if [ -n "$SINGLE_HTML" ]; then
+					ln -sf "$SINGLE_HTML" index.html
+				fi
+			fi
+			
+			# 5. Permisos y Apache
+			chown -R www-data:www-data /var/www/html
+			find /var/www/html -type d -exec chmod 755 {} +
+			find /var/www/html -type f -exec chmod 644 {} +
+			
+			systemctl restart apache2
+		'
 		
-		# Asegurar que no haya un index.html ausente si hay otros html
-		if [ ! -f index.html ] && [ $(ls -1 *.html 2>/dev/null | wc -l) -eq 1 ]; then
-			SINGLE_HTML=$(ls -1 *.html)
-			echo "No hay index.html, vinculando $SINGLE_HTML como principal"
-			sudo ln -s "$SINGLE_HTML" index.html
-		fi
-		
-		# Ajustar ServerName en Apache para evitar conflictos de VirtualHost
-		if [ -f /etc/apache2/sites-available/plantilla.conf ]; then
-			sudo sed -i "s/ServerName .*/ServerName %s.%s/" /etc/apache2/sites-available/plantilla.conf
-			sudo a2ensite plantilla.conf > /dev/null 2>&1
-		fi
-		
-		# Corregir permisos para Apache
-		sudo chown -R www-data:www-data /var/www/html
-		sudo find /var/www/html -type d -exec chmod 755 {} +
-		sudo find /var/www/html -type f -exec chmod 644 {} +
-		
-		# Limpiar el zip subido
+		# Limpiar rastro
 		rm -f %s
-	`, remoteZipPath, nombre, config.Global.DNSZone, remoteZipPath)
+	`, nombre, nombre, remoteZipPath, remoteZipPath)
 
 	out, err := cloneSSH(deployScript)
 	if err != nil {
@@ -451,8 +454,6 @@ sendProgress(88, "Descomprimiendo y normalizando estructura...")
 		return
 	}
 
-sendProgress(93, "Reiniciando Apache...")
-	cloneSSH("sudo systemctl restart apache2")
 
 // 13. Save instance metadata
 sendProgress(97, "Guardando metadatos de instancia...")

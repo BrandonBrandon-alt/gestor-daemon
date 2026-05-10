@@ -157,14 +157,9 @@ EOF
 </html>
 EOF
 
-      a2dissite 000-default.conf 2>/dev/null || true
-      cat > /etc/apache2/sites-available/plantilla.conf <<'EOF'
-<VirtualHost *:80>
-    ServerName plantilla.#{DNS_ZONE}
-    DocumentRoot /var/www/html
-</VirtualHost>
-EOF
-      a2ensite plantilla.conf
+      # Configuración de Apache genérica (Root Fix)
+      # No usamos sitios específicos, dejamos el default para que sea agnóstico
+      a2ensite 000-default.conf 2>/dev/null || true
       systemctl enable --now apache2
 
       #{$configure_dns}
