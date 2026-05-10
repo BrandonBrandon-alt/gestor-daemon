@@ -354,38 +354,20 @@ out, err := session.CombinedOutput(cmd)
 return string(out), err
 }
 
-// 9. Configure static IP
-sendProgress(70, fmt.Sprintf("Configurando IP estática %s...", nuevaIP))
-ifaceContent := fmt.Sprintf("#VAGRANT-BEGIN\nauto eth1\niface eth1 inet static\n      address %s\n      netmask 255.255.255.0\n#VAGRANT-END\n", nuevaIP)
-cloneSSH(fmt.Sprintf(`sudo bash -c "printf '%s' > /etc/network/interfaces.d/eth1-static"`, ifaceContent))
-cloneSSH("sudo hostnamectl set-hostname " + nombre)
-cloneSSH("sudo ip addr flush dev eth1 || true")
-cloneSSH(fmt.Sprintf("sudo ip addr add %s/24 dev eth1 && sudo ip link set eth1 up", nuevaIP))
+	// 9. Configure static IP
+	sendProgress(70, fmt.Sprintf("Configurando IP estática %s...", nuevaIP))
+	ifaceContent := fmt.Sprintf("#VAGRANT-BEGIN\nauto eth1\niface eth1 inet static\n      address %s\n      netmask 255.255.255.0\n#VAGRANT-END\n", nuevaIP)
+	cloneSSH(fmt.Sprintf(`sudo bash -c "printf '%s' > /etc/network/interfaces.d/eth1-static"`, ifaceContent))
+	cloneSSH("sudo ip addr flush dev eth1 || true")
+	cloneSSH(fmt.Sprintf("sudo ip addr add %s/24 dev eth1 && sudo ip link set eth1 up", nuevaIP))
+	
+	time.Sleep(1 * time.Second)
 
-time.Sleep(2 * time.Second)
-
-	// 10. Register in BIND9 DNS
-	sendProgress(78, "Registrando en servidor DNS...")
-	err = dns.RegisterDNS(nombre, nuevaIP)
-	if err != nil {
-		fmt.Println("Advertencia DNS:", err)
-	}
-
-	// 10a. Update Local /etc/hosts (Option A)
+	// 10. Actualizar resolución local en el host
 	sendProgress(78, "Actualizando resolución local en el host...")
-	err = dns.UpdateLocalHosts(nombre, nuevaIP)
-	if err != nil {
-		fmt.Println("Advertencia /etc/hosts local:", err)
-	}
+	dns.UpdateLocalHosts(nombre, nuevaIP)
 
-	// 10b. Update guest /etc/hosts via SSH
-	sendProgress(79, "Actualizando resolución de hosts local en la VM...")
-	_, err = sshutil.RunSSH(nuevaIP, fmt.Sprintf("echo '%s    %s.%s' | sudo tee -a /etc/hosts", nuevaIP, nombre, config.Global.DNSZone))
-	if err != nil {
-		fmt.Println("Advertencia /etc/hosts en VM:", err)
-	}
-
-// 11. Upload ZIP via SCP through NAT port
+	// 11. Subir archivos (ZIP)
 sendProgress(82, "Subiendo archivos del sitio web...")
 	remoteZipPath := "/home/" + config.Global.SSHUser + "/deploy.zip"
 	scpConfig, _ := sshutil.BuildSSHConfig()
